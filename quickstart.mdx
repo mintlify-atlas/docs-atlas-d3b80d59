@@ -1,47 +1,231 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started: Deploy Saltbox on Ubuntu 22.04 or 24.04"
+sidebarTitle: "Quickstart"
+description: "Deploy a complete Docker media server stack with Saltbox on Ubuntu 22.04 or 24.04 in a few steps — from first boot to fully running services."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+This guide walks you through a complete Saltbox installation on a fresh Ubuntu 22.04 or 24.04 LTS Server from clone to running services. Each step builds on the last, so follow them in order. By the end you will have a fully running stack with Traefik reverse proxy, TLS certificates, and your chosen applications accessible at subdomains of your own domain.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+<Warning>
+  Do not run any Saltbox commands as the `root` user. The preinstall playbook creates and manages a dedicated non-root service account (configured in `accounts.yml`). Running as root will cause the `user_check` role to abort the playbook immediately. Log in as a regular sudo-capable user.
+</Warning>
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Clone the Saltbox repository">
+    Clone the repository into `/srv/git/saltbox`, which is the expected working directory for all subsequent commands.
 
     ```bash
-    npm install your-package
+    sudo git clone https://github.com/saltyorg/Saltbox /srv/git/saltbox
+    cd /srv/git/saltbox
     ```
+
+    <Tip>
+      Cloning into `/srv/git/saltbox` is the conventional location. The `ansible.cfg` file inside the repository uses relative paths, so all `ansible-playbook` commands should be run from this directory.
+    </Tip>
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Install Ansible and dependencies">
+    Saltbox requires Ansible and a Python virtual environment. The repository includes a setup script that handles this automatically:
 
     ```bash
-    your-cli init
+    sudo bash /srv/git/saltbox/scripts/saltbox_docker.sh
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+    Alternatively, install Ansible manually into the expected virtual environment path:
 
     ```bash
-    your-cli start
+    sudo python3 -m venv /srv/ansible/venv
+    sudo /srv/ansible/venv/bin/pip install --upgrade pip
+    sudo /srv/ansible/venv/bin/pip install ansible
+    ```
+
+    <Note>
+      The `ansible.cfg` in the repository sets `interpreter_python = /srv/ansible/venv/bin/python3`. Ansible must be installed in that virtual environment path for the playbook to resolve its interpreter correctly.
+    </Note>
+  </Step>
+
+  <Step title="Install required Ansible collections">
+    Saltbox depends on three Ansible collections declared in `requirements.yml`. Install them before running any playbook:
+
+    ```bash
+    /srv/ansible/venv/bin/ansible-galaxy collection install -r /srv/git/saltbox/requirements.yml
+    ```
+
+    The `requirements.yml` pulls in:
+
+    ```yaml
+    collections:
+      - community.general
+      - community.docker
+      - ansible.posix
     ```
   </Step>
+
+  <Step title="Copy default configuration files">
+    Saltbox reads its configuration from several YAML files in `/srv/git/saltbox`. Copy the provided defaults to create your editable config files:
+
+    ```bash
+    cd /srv/git/saltbox
+
+    cp defaults/accounts.yml.default        accounts.yml
+    cp defaults/settings.yml.default        settings.yml
+    cp defaults/adv_settings.yml.default    adv_settings.yml
+    cp defaults/providers.yml.default       providers.yml
+    cp defaults/backup_config.yml.default   backup_config.yml
+    ```
+
+    <Note>
+      The main `saltbox.yml` playbook loads each config file with a fallback to its `.default` counterpart, so you only need to edit the values you want to change. However, at minimum you must set your domain, email, and Cloudflare credentials in `accounts.yml` before running the playbook.
+    </Note>
+  </Step>
+
+  <Step title="Edit accounts.yml">
+    Open `accounts.yml` and fill in your real values. This is the most important config file — it controls your domain, TLS email, service user account, and Cloudflare API credentials.
+
+    ```yaml
+    ---
+    apprise:
+    cloudflare:
+      api: YOUR_CLOUDFLARE_API_TOKEN
+      email: you@yourdomain.com
+    dockerhub:
+      token:
+      user:
+    user:
+      domain: yourdomain.com
+      email: you@yourdomain.com
+      name: yourlinuxusername
+      pass: a_strong_password
+      ssh_key:
+    ```
+
+    | Field | Description |
+    |---|---|
+    | `cloudflare.api` | Your Cloudflare API token (Zone:DNS:Edit permission). Required for automatic TLS via DNS challenge. |
+    | `cloudflare.email` | The email address associated with your Cloudflare account. |
+    | `user.domain` | The root domain Traefik will use for all service subdomains (e.g. `yourdomain.com`). |
+    | `user.email` | Contact email for Let's Encrypt certificate registration. |
+    | `user.name` | The Linux username Saltbox creates and uses as the service account. |
+    | `user.pass` | Password for the service user. |
+    | `apprise` | Optional: an [Apprise](https://github.com/caronc/apprise) URL for notifications. |
+    | `dockerhub.user` / `dockerhub.token` | Optional: Docker Hub credentials to avoid anonymous pull-rate limits. |
+  </Step>
+
+  <Step title="Edit settings.yml">
+    Open `settings.yml` to configure Rclone remotes, shell preference, and download paths. The defaults are shown below — adjust the `remotes` list to match your actual Rclone remote name(s).
+
+    ```yaml
+    ---
+    authelia:
+      master: yes
+      subdomain: login
+    downloads: /mnt/unionfs/downloads
+    rclone:
+      enabled: yes
+      remotes:
+        - remote: google
+          settings:
+            enable_refresh: yes
+            mount: yes
+            template: google
+            union: yes
+            upload: yes
+            upload_from: /mnt/local/Media
+            vfs_cache:
+              enabled: no
+              max_age: 504h
+              size: 50G
+      version: latest
+    shell: bash
+    transcodes: /mnt/local/transcodes
+    ```
+
+    Set `rclone.enabled: no` if you are not using cloud storage. Change `shell` to `zsh` if preferred.
+  </Step>
+
+  <Step title="Run preinstall">
+    The `preinstall` tag prepares the operating system without deploying any applications. It configures the kernel, creates the service user, installs Docker and Rclone, sets up mount templates, and installs Traefik.
+
+    ```bash
+    cd /srv/git/saltbox
+    sudo /srv/ansible/venv/bin/ansible-playbook saltbox.yml --tags preinstall
+    ```
+
+    <Tip>
+      After `preinstall` completes, **log out and back in** as the service user you defined in `accounts.yml` before continuing. The subsequent steps must be run as that user, not as root or your original sudo user.
+    </Tip>
+  </Step>
+
+  <Step title="Run the full Saltbox install">
+    With the OS prepared and you logged in as the Saltbox service user, run the full install tag for your chosen deployment model:
+
+    <CodeGroup>
+      ```bash All-in-one (saltbox)
+      ansible-playbook /srv/git/saltbox/saltbox.yml --tags saltbox
+      ```
+
+      ```bash Media server only (mediabox)
+      ansible-playbook /srv/git/saltbox/saltbox.yml --tags mediabox
+      ```
+
+      ```bash Download/indexing only (feederbox)
+      ansible-playbook /srv/git/saltbox/saltbox.yml --tags feederbox
+      ```
+    </CodeGroup>
+
+    The playbook will configure Docker networking, deploy Traefik with automatic TLS, set up Rclone mounts and UnionFS, and bring up all included application containers. This may take 10–30 minutes depending on your server and internet connection.
+  </Step>
+
+  <Step title="Access your services">
+    Once the playbook finishes, all deployed services are accessible via HTTPS subdomains of your domain. Traefik manages the TLS certificates automatically.
+
+    ```
+    https://plex.yourdomain.com
+    https://sonarr.yourdomain.com
+    https://radarr.yourdomain.com
+    https://portainer.yourdomain.com
+    https://organizr.yourdomain.com
+    ```
+
+    <Note>
+      DNS records for these subdomains must resolve to your server's public IP address. If you are using Cloudflare, Saltbox can create these records automatically when `cloudflare.api` is set in `accounts.yml` and the `cloudflare` role runs as part of your chosen install tag.
+    </Note>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Installing Individual Applications
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+After the base install, you can add any application from the Saltbox catalogue at any time by running its dedicated tag:
+
+```bash
+# Install Sonarr
+ansible-playbook /srv/git/saltbox/saltbox.yml --tags sonarr
+
+# Install Lidarr
+ansible-playbook /srv/git/saltbox/saltbox.yml --tags lidarr
+
+# Install Authelia (authentication proxy)
+ansible-playbook /srv/git/saltbox/saltbox.yml --tags authelia
+
+# Install Overseerr (media request management)
+ansible-playbook /srv/git/saltbox/saltbox.yml --tags overseerr
+
+# Install qBittorrent
+ansible-playbook /srv/git/saltbox/saltbox.yml --tags qbittorrent
+```
+
+Every role is idempotent — running a tag again on an already-installed application will update its configuration without data loss.
+
+## Re-running and Updating
+
+To update an existing installation, pull the latest Saltbox repository changes and re-run the relevant tag:
+
+```bash
+cd /srv/git/saltbox
+git pull
+ansible-playbook saltbox.yml --tags <tagname>
+```
+
+Running a top-level tag like `saltbox` again is safe — Ansible will only apply changes where the current state differs from the desired state.

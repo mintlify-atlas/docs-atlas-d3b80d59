@@ -1,0 +1,154 @@
+---
+title: "Keeping Saltbox and Installed Applications Updated"
+sidebarTitle: "Updating"
+description: "Keep Saltbox and its deployed applications up to date by re-running Ansible tags. Individual apps and the full stack can be updated independently."
+---
+
+Saltbox uses idempotent Ansible roles for every application it manages. Re-running a role's tag pulls the latest Docker image for that service, recreates the container with updated configuration, and restarts it — making updates and fresh installs identical operations. You can update the entire stack in one command or target a single application without touching anything else.
+
+## Before You Update
+
+Always pull the latest Saltbox Ansible roles from the repository before re-running any playbook. The roles themselves are what define how each application is configured and which image tag to use.
+
+<Steps>
+  <Step title="Pull the latest Saltbox repository">
+    ```bash
+    cd /srv/git/saltbox
+    git pull
+    ```
+
+    This updates the Ansible roles, variable defaults, and any new application definitions.
+  </Step>
+  <Step title="Review announcements">
+    Check `announcements.yml` in the repository for any breaking changes that require manual action before or after an update:
+
+    ```bash
+    cat /srv/git/saltbox/announcements.yml
+    ```
+
+    Major milestones (like the Role Refactor release) may require configuration migration steps described in the linked documentation.
+  </Step>
+  <Step title="Run a dry run (optional)">
+    Use the `--check` flag to preview what Ansible would change without actually applying anything:
+
+    ```bash
+    ansible-playbook saltbox.yml --tags sonarr --check
+    ```
+
+    <Tip>
+      The `--check` flag is especially useful before updating infrastructure components like Docker or Traefik, where a misconfiguration could take down all running containers.
+    </Tip>
+  </Step>
+  <Step title="Run the update">
+    Execute the appropriate tag for what you want to update (see sections below).
+  </Step>
+</Steps>
+
+## Updating the Full Saltbox Stack
+
+The `saltbox` tag re-runs all core roles in order — kernel settings, user configuration, rclone, Docker, Traefik, and all included applications:
+
+```bash
+ansible-playbook saltbox.yml --tags saltbox
+```
+
+Equivalent tags for the mediabox and feederbox installation types:
+
+```bash
+# Media server only (Plex, Autoscan, etc.)
+ansible-playbook saltbox.yml --tags mediabox
+
+# Feeder box only (download clients, Cloudplow, etc.)
+ansible-playbook saltbox.yml --tags feederbox
+```
+
+## Updating Individual Applications
+
+Replace the tag with the name of any application defined in `saltbox.yml`. Each role stops the existing container, pulls the latest image, and recreates the container:
+
+```bash
+ansible-playbook saltbox.yml --tags sonarr
+ansible-playbook saltbox.yml --tags radarr
+ansible-playbook saltbox.yml --tags plex
+ansible-playbook saltbox.yml --tags sabnzbd
+```
+
+You can comma-separate multiple tags to update several apps in a single run:
+
+```bash
+ansible-playbook saltbox.yml --tags "sonarr,radarr,lidarr"
+```
+
+## Updating Core Infrastructure
+
+<CardGroup cols={2}>
+  <Card title="Docker" icon="docker">
+    Updates the Docker engine and associated tooling.
+
+    ```bash
+    ansible-playbook saltbox.yml --tags docker
+    ```
+  </Card>
+  <Card title="Traefik" icon="network-wired">
+    Recreates the Traefik reverse proxy container with the latest image and regenerates routing configuration.
+
+    ```bash
+    ansible-playbook saltbox.yml --tags traefik
+    ```
+  </Card>
+  <Card title="Rclone" icon="cloud">
+    Updates the rclone binary and refreshes mount templates.
+
+    ```bash
+    ansible-playbook saltbox.yml --tags rclone
+    ```
+  </Card>
+  <Card title="Scripts" icon="terminal">
+    Refreshes helper scripts and utility packages installed by Saltbox.
+
+    ```bash
+    ansible-playbook saltbox.yml --tags scripts
+    ```
+  </Card>
+</CardGroup>
+
+## Monitoring and Maintenance Tools
+
+### DIUN — Docker Image Update Notifier
+
+DIUN watches your running containers and sends a notification whenever a newer image is available upstream. Install or update it with:
+
+```bash
+ansible-playbook saltbox.yml --tags diun
+```
+
+DIUN runs as a Docker container and integrates with any notifier configured in your Saltbox `providers.yml` (Apprise, Discord, Slack, etc.).
+
+### Autoheal
+
+Autoheal monitors Docker containers that expose a health check and automatically restarts any that enter an unhealthy state:
+
+```bash
+ansible-playbook saltbox.yml --tags autoheal
+```
+
+### Saltbox Mod
+
+The `saltbox-mod` tag installs the [saltbox_mod](https://github.com/saltyorg/saltbox_mod) extension repository, which provides additional customization hooks on top of the core Saltbox roles:
+
+```bash
+ansible-playbook saltbox.yml --tags saltbox-mod
+```
+
+The extension is cloned from `https://github.com/saltyorg/saltbox_mod.git` into `/opt/saltbox_mod/`.
+
+## Best Practices
+
+<Note>
+  Always run `git pull` in `/srv/git/saltbox/` **before** re-running any playbook. Running stale roles against a newer Docker image can produce unexpected results.
+</Note>
+
+- **Update one component at a time** when troubleshooting — isolating a tag makes it easier to identify what changed.
+- **Check container logs after updates** with `docker logs <container-name>` to confirm the new version started cleanly.
+- **Keep rclone current** — cloud provider APIs change frequently. Run `--tags rclone` when you see authentication errors on mounts.
+- **Use `--check` for infrastructure changes** — always dry-run Docker, Traefik, or system-level tags on production servers before applying.

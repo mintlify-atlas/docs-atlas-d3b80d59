@@ -1,0 +1,248 @@
+---
+title: "Arr Apps: Sonarr, Radarr, Lidarr, Prowlarr, and More"
+sidebarTitle: "Arr Apps"
+description: "Deploy the full Arr suite with Saltbox: Sonarr, Radarr, Lidarr, Bazarr, Prowlarr, Whisparr, Readarr, and more for automated media acquisition and management."
+---
+
+The "Arr" ecosystem is a collection of applications that automate the search, download, and organisation of different media types. They communicate over the internal Docker network: Prowlarr (or Jackett) feeds indexers to the *arr apps, which instruct download clients to fetch releases, and Autoscan triggers your media server library refresh once files land in the right directory. Saltbox pre-configures each app with the correct paths, SSO middleware, and ThemePark support so you can go from zero to a working automation stack in a single playbook run.
+
+---
+
+## Media Management
+
+<CardGroup cols={2}>
+  <Card title="Sonarr" icon="tv">
+    TV series management. Monitors RSS feeds, searches indexers, grabs episodes, and renames files to your preferred format. Accessible at `sonarr.<domain>`.
+  </Card>
+  <Card title="Radarr" icon="film">
+    Movie management — the Sonarr fork for films. Handles movie collection, quality upgrades, and custom formats. Accessible at `radarr.<domain>`.
+  </Card>
+  <Card title="Lidarr" icon="music">
+    Music collection manager. Tracks artists, albums, and individual tracks from Usenet and torrents. Accessible at `lidarr.<domain>`.
+  </Card>
+  <Card title="Whisparr" icon="circle-play">
+    An Arr-family app for adult content management. Same familiar interface and integration model. Accessible at `whisparr.<domain>`.
+  </Card>
+</CardGroup>
+
+### Sonarr
+
+```bash
+ansible-playbook saltbox.yml --tags sonarr
+```
+
+Sonarr runs on port `8989` inside the container (`ghcr.io/hotio/sonarr`) and is accessible at `https://sonarr.<your-domain>`. Saltbox enables `sonarr_role_external_auth: true` by default, meaning Traefik's SSO middleware guards the web UI while the API endpoints (`/api`, `/feed`, `/ping`) remain accessible without authentication for Arr-to-Arr communication.
+
+### Radarr
+
+```bash
+ansible-playbook saltbox.yml --tags radarr
+```
+
+Radarr runs on port `7878` (`ghcr.io/hotio/radarr`) and is accessible at `https://radarr.<your-domain>`. Like Sonarr, `radarr_role_external_auth: true` is set and API paths bypass SSO.
+
+### Lidarr
+
+```bash
+ansible-playbook saltbox.yml --tags lidarr
+```
+
+Lidarr runs on port `8686` (`ghcr.io/hotio/lidarr`) and is accessible at `https://lidarr.<your-domain>`.
+
+### Whisparr
+
+```bash
+ansible-playbook saltbox.yml --tags whisparr
+```
+
+---
+
+## Indexer Management
+
+<CardGroup cols={2}>
+  <Card title="Prowlarr" icon="search">
+    The modern, recommended indexer manager. Syncs indexers to all your Arr apps automatically. Replaces Jackett for new setups. Accessible at `prowlarr.<domain>`.
+  </Card>
+  <Card title="Jackett" icon="key">
+    Legacy indexer proxy. If you have existing Jackett configurations this remains fully supported. Accessible at `jackett.<domain>`.
+  </Card>
+  <Card title="NZBHydra2" icon="layer-group">
+    Meta-search aggregator for NZB indexers. Useful for combining multiple Usenet indexers into a single endpoint. Accessible at `nzbhydra2.<domain>`.
+  </Card>
+</CardGroup>
+
+### Prowlarr
+
+```bash
+ansible-playbook saltbox.yml --tags prowlarr
+```
+
+Prowlarr is the recommended indexer manager for new Saltbox setups. Once deployed, add your indexers in Prowlarr and use its **Apps** sync feature to push them to Sonarr, Radarr, and Lidarr automatically — no per-app manual indexer configuration required.
+
+### Jackett
+
+```bash
+ansible-playbook saltbox.yml --tags jackett
+```
+
+### NZBHydra2
+
+```bash
+ansible-playbook saltbox.yml --tags nzbhydra2
+```
+
+The `download-indexers` meta-tag installs all indexer tools at once:
+
+```bash
+ansible-playbook saltbox.yml --tags download-indexers
+```
+
+---
+
+## Subtitle Management
+
+### Bazarr
+
+Bazarr integrates with Sonarr and Radarr to automatically download and manage subtitles from multiple providers (OpenSubtitles, Subscene, etc.).
+
+```bash
+ansible-playbook saltbox.yml --tags bazarr
+```
+
+Bazarr is accessible at `https://bazarr.<your-domain>`.
+
+---
+
+## Request Management
+
+<CardGroup cols={2}>
+  <Card title="Overseerr" icon="hand">
+    Sleek request management UI for Plex users. Allows friends and family to request movies and TV shows. Accessible at `overseerr.<domain>`.
+  </Card>
+  <Card title="Petio" icon="users">
+    An alternative request manager compatible with Plex, Emby, and Jellyfin. Accessible at `petio.<domain>`.
+  </Card>
+</CardGroup>
+
+```bash
+# Install Overseerr (recommended for Plex)
+ansible-playbook saltbox.yml --tags overseerr
+
+# Install Petio
+ansible-playbook saltbox.yml --tags petio
+```
+
+The `seerr` meta-tag installs the default request manager selection:
+
+```bash
+ansible-playbook saltbox.yml --tags seerr
+```
+
+---
+
+## Library Automation
+
+<CardGroup cols={2}>
+  <Card title="Autoscan" icon="rotate">
+    Listens for file-system events from Arr apps and triggers targeted library scans in Plex, Emby, or Jellyfin — far faster than scheduled full-library scans.
+  </Card>
+  <Card title="Unpackerr" icon="box-open">
+    Monitors download directories and automatically extracts compressed archives (`.rar`, `.zip`) after they finish downloading, then optionally cleans up the originals.
+  </Card>
+</CardGroup>
+
+```bash
+# Autoscan
+ansible-playbook saltbox.yml --tags autoscan
+
+# Unpackerr
+ansible-playbook saltbox.yml --tags unpackerr
+```
+
+---
+
+## Plex Analytics
+
+### Tautulli
+
+Tautulli connects to Plex and records detailed playback history, user statistics, and notification events.
+
+```bash
+ansible-playbook saltbox.yml --tags tautulli
+```
+
+Tautulli runs on port `8181` (`ghcr.io/hotio/tautulli`) and is accessible at `https://tautulli.<your-domain>`. It uses `traefik_default_sso_middleware` by default so the dashboard is SSO-protected, while notification webhook paths (`/api`, `/newsletter`, `/image`, `/pms_image_proxy`) are exempt.
+
+---
+
+## Multi-Instance Support
+
+Every major Arr app supports multiple isolated instances via its `_instances` variable. This is useful for running separate 1080p and 4K workflows, or for segregating different users' libraries.
+
+```yaml
+# inventory/host_vars/localhost.yml
+
+# Two Sonarr instances: standard and 4K
+sonarr_instances:
+  - sonarr
+  - sonarr4k
+
+# Two Radarr instances: standard and 4K
+radarr_instances:
+  - radarr
+  - radarr4k
+```
+
+Each instance gets its own subdomain, appdata directory, and Docker container. Run the tag as normal and Saltbox will deploy all instances in the list:
+
+```bash
+ansible-playbook saltbox.yml --tags sonarr
+# Deploys both sonarr and sonarr4k
+```
+
+---
+
+## External Authentication
+
+All Arr apps have `_role_external_auth: true` set, which attaches the `traefik_default_sso_middleware` to all non-API routes. This means your Authelia or Authentik SSO session is required to access the web UI, but Radarr/Sonarr API tokens still work for inter-app communication without involving the SSO layer.
+
+```yaml
+# These are set automatically — shown here for reference
+sonarr_role_external_auth: true
+sonarr_role_traefik_sso_middleware: "{{ traefik_default_sso_middleware }}"
+sonarr_role_traefik_api_endpoint: "PathPrefix(`/api`) || PathPrefix(`/feed`) || PathPrefix(`/ping`)"
+```
+
+---
+
+## ThemePark Integration
+
+All Arr apps support [Theme.Park](https://github.com/themepark-dev/theme.park) for custom UI theming. Enable it per-app in inventory:
+
+```yaml
+sonarr_role_themepark_enabled: true
+radarr_role_themepark_enabled: true
+lidarr_role_themepark_enabled: true
+```
+
+The theme applied is controlled by the global `global_themepark_theme` variable (set in `adv_settings.yml`). Per-app theme overrides are also supported.
+
+---
+
+## Quick Reference
+
+| App | Tag | Port | Subdomain |
+|---|---|---|---|
+| Sonarr | `sonarr` | 8989 | `sonarr.<domain>` |
+| Radarr | `radarr` | 7878 | `radarr.<domain>` |
+| Lidarr | `lidarr` | 8686 | `lidarr.<domain>` |
+| Bazarr | `bazarr` | 6767 | `bazarr.<domain>` |
+| Prowlarr | `prowlarr` | 9696 | `prowlarr.<domain>` |
+| Jackett | `jackett` | 9117 | `jackett.<domain>` |
+| NZBHydra2 | `nzbhydra2` | 5076 | `nzbhydra2.<domain>` |
+| Whisparr | `whisparr` | 6969 | `whisparr.<domain>` |
+| Overseerr | `overseerr` | 5055 | `overseerr.<domain>` |
+| Petio | `petio` | 7777 | `petio.<domain>` |
+| Tautulli | `tautulli` | 8181 | `tautulli.<domain>` |
+| Autoscan | `autoscan` | 3030 | `autoscan.<domain>` |
+| Unpackerr | `unpackerr` | — | — |

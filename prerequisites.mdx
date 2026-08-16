@@ -1,0 +1,185 @@
+---
+title: "Saltbox Prerequisites: Server, Domain, and Accounts"
+sidebarTitle: "Prerequisites"
+description: "What you need before installing Saltbox: a compatible Ubuntu server, a registered domain, Cloudflare DNS, and optional Plex or cloud storage credentials."
+---
+
+Before you run a single Ansible command, make sure your environment meets every requirement on this page. Saltbox has firm constraints on hardware, operating system, and network configuration — attempting an install on an unsupported platform will result in failures that are difficult to diagnose and are not covered by community support. Take ten minutes now to verify each item.
+
+## Supported Platforms
+
+<Warning>
+  Saltbox is designed exclusively for **x64 (amd64) machines running Ubuntu Server 22.04 LTS or 24.04 LTS**. The following configurations are explicitly **not supported** and will not receive community assistance:
+
+  - Ubuntu Desktop (any version)
+  - Non-LTS Ubuntu releases (e.g. 23.10, 25.04)
+  - Any Linux distribution other than Ubuntu (Debian, CentOS, Fedora, Arch, etc.)
+  - ARM processors — including Raspberry Pi, AWS Graviton, and Apple Silicon
+</Warning>
+
+Use the official Ubuntu Server minimal image for your target release. Do not select the Desktop variant during installation, and do not install a desktop environment afterwards.
+
+## Hardware Requirements
+
+<CardGroup cols={2}>
+  <Card title="Processor" icon="microchip">
+    x64 (amd64) CPU required. ARM is not supported. Any modern 64-bit Intel or AMD processor is suitable. Virtualised environments (KVM, VMware, Proxmox, cloud VMs) work fine as long as the guest OS is Ubuntu Server x64.
+  </Card>
+  <Card title="RAM" icon="memory">
+    Minimum 4 GB RAM recommended for a basic install. Running a full `saltbox` stack with Plex transcoding, Sonarr, Radarr, and related services simultaneously benefits from 8 GB or more.
+  </Card>
+  <Card title="Storage" icon="hard-drive">
+    An SSD is strongly recommended for the OS and appdata volume (`/opt`). Application databases (Plex metadata, Sonarr/Radarr SQLite files) are I/O-sensitive. A separate HDD or cloud mount for media storage is typical.
+  </Card>
+  <Card title="Network" icon="network-wired">
+    A static public IP address or a reliable DDNS setup. Ports **80** and **443** must be reachable from the internet — Traefik uses them to serve applications and (optionally) perform HTTP certificate validation.
+  </Card>
+</CardGroup>
+
+## Operating System
+
+Install **Ubuntu Server 22.04 LTS** or **Ubuntu Server 24.04 LTS** (64-bit) on your machine or virtual machine. During installation, select the minimal server option and do not add a desktop environment. Ensure the system is fully updated before starting:
+
+```bash
+sudo apt update && sudo apt full-upgrade -y
+sudo reboot
+```
+
+After rebooting, confirm your release:
+
+```bash
+lsb_release -a
+```
+
+The output should show `Ubuntu 22.04 LTS` or `Ubuntu 24.04 LTS`.
+
+## Network and Domain
+
+### Public IP or DDNS
+
+Your server needs a reachable public IP address. If your ISP provides a dynamic IP, configure a DDNS service to keep a hostname pointing at your current address, or use Cloudflare's proxying to abstract the IP.
+
+### Registered Domain
+
+You must own and control a registered domain name (e.g. `yourdomain.com`). Saltbox uses Traefik to automatically route every application to a subdomain of that root domain:
+
+```
+plex.yourdomain.com
+sonarr.yourdomain.com
+radarr.yourdomain.com
+portainer.yourdomain.com
+```
+
+Any domain registrar is acceptable. The domain does not need to be registered with Cloudflare, but it must use Cloudflare nameservers if you want automatic DNS record management and DNS-challenge TLS (the recommended approach).
+
+### Open Ports
+
+Ensure your firewall or hosting provider security group allows inbound TCP traffic on:
+
+| Port | Protocol | Purpose |
+|---|---|---|
+| 80 | TCP | Traefik HTTP (redirects to HTTPS / HTTP challenge) |
+| 443 | TCP | Traefik HTTPS — all web UIs and API endpoints |
+
+No other ports need to be publicly exposed for standard operation. Individual applications communicate over the internal Docker `saltbox` network.
+
+## Cloudflare Account (Recommended)
+
+Saltbox's default and recommended DNS provider is Cloudflare. Using Cloudflare allows Traefik to obtain wildcard TLS certificates via DNS challenge without requiring port 80 to be reachable, and enables automatic creation of DNS A-records for each application subdomain.
+
+**Setup steps:**
+
+1. Create a free account at [cloudflare.com](https://www.cloudflare.com).
+2. Add your domain to Cloudflare and update your registrar's nameservers to the ones Cloudflare assigns.
+3. Create a Cloudflare API token with `Zone → DNS → Edit` permission scoped to your domain.
+4. Add the token and your Cloudflare account email to `accounts.yml`:
+
+```yaml
+cloudflare:
+  api: YOUR_CLOUDFLARE_API_TOKEN
+  email: you@yourdomain.com
+```
+
+### Alternative DNS Providers
+
+If you prefer not to use Cloudflare, Saltbox supports a range of other DNS providers through `providers.yml`. Set `traefik.provider` in `adv_settings.yml` to match your provider and fill in the relevant credentials in `providers.yml`:
+
+```yaml
+# adv_settings.yml
+traefik:
+  provider: hetzner   # or linode, namecheap, porkbun, godaddy, etc.
+```
+
+The full list of supported providers and their required fields in `providers.yml`:
+
+| Provider | Required fields |
+|---|---|
+| Hetzner | `api_key` |
+| Linode | `token` |
+| Namecheap | `api_key`, `api_user` |
+| Porkbun | `api_key`, `secret_key` |
+| GoDaddy | `api_key`, `api_secret` |
+| DuckDNS | `token` |
+| Dynu | `api_key` |
+| CloudNS | `client_id`, `email`, `password` |
+| Netcup | `api_key`, `api_password`, `customer_number` |
+| PowerDNS | `api_key`, `api_url` |
+| Name.com | `username`, `api_token`, `server` |
+
+<Note>
+  DNS-challenge TLS is strongly recommended over HTTP validation. With DNS challenge, certificate issuance works even if port 80 is blocked. To use HTTP validation instead, set `traefik.cert.http_validation: yes` in `adv_settings.yml`.
+</Note>
+
+## Plex Account (Optional)
+
+If you plan to deploy Plex as your media server, you need a [plex.tv](https://www.plex.tv) account. Saltbox uses the Plex auth token role (`plex-auth-token` tag) to claim your Plex server to your account automatically during install. Without a valid Plex account, the Plex container will start but remain unclaimed.
+
+No special Plex plan is required — a free plex.tv account is sufficient to run a self-hosted Plex Media Server.
+
+## Cloud Storage Account (Optional)
+
+Saltbox's Rclone integration supports any rclone-compatible remote for media storage and automated upload. Google Drive is the most commonly used backend and is configured in `settings.yml` under the `rclone.remotes` list.
+
+```yaml
+# settings.yml
+rclone:
+  enabled: yes
+  remotes:
+    - remote: google
+      settings:
+        mount: yes
+        upload: yes
+        upload_from: /mnt/local/Media
+        template: google
+```
+
+<Tip>
+  If you do not use cloud storage, set `rclone.enabled: no` in `settings.yml`. Saltbox will still function fully; media will be stored on local disk only and Cloudplow will be disabled.
+</Tip>
+
+To use Google Drive, you will need to configure an Rclone remote named `google` (or matching whatever name you set in `settings.yml`) before running the Saltbox playbook. Run `rclone config` to set up the remote interactively.
+
+## Summary Checklist
+
+Before proceeding to the [Quickstart](/quickstart), confirm every item:
+
+<CardGroup cols={2}>
+  <Card title="Ubuntu Server 22.04 or 24.04 LTS (x64)" icon="circle-check">
+    Fresh minimal server install, fully updated, no desktop environment.
+  </Card>
+  <Card title="x64 Hardware or VM" icon="circle-check">
+    At least 4 GB RAM and an SSD for appdata. ARM not supported.
+  </Card>
+  <Card title="Registered Domain" icon="circle-check">
+    A domain you control with its nameservers pointing to Cloudflare (or another supported provider).
+  </Card>
+  <Card title="Cloudflare API Token" icon="circle-check">
+    Zone → DNS → Edit permission. Required for DNS-challenge TLS and automatic subdomain creation.
+  </Card>
+  <Card title="Ports 80 and 443 Open" icon="circle-check">
+    Inbound TCP allowed from the internet at the firewall / security group level.
+  </Card>
+  <Card title="Sudo-capable Non-root User" icon="circle-check">
+    A regular user with sudo access to run the initial preinstall playbook.
+  </Card>
+</CardGroup>

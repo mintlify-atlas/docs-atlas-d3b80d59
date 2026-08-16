@@ -1,0 +1,347 @@
+---
+title: "Configure DNS Providers for Traefik Certificate Validation"
+sidebarTitle: "Providers"
+description: "Set DNS provider credentials in providers.yml for Traefik DNS-01 ACME challenges. Supports Cloudflare, Hetzner, Linode, Namecheap, Porkbun, and GoDaddy."
+---
+
+`providers.yml` stores the API credentials that Traefik needs to perform the ACME **DNS-01 challenge** when obtaining TLS certificates from Let's Encrypt or ZeroSSL. In a DNS-01 challenge, the ACME client proves domain ownership by creating a temporary `TXT` record in your DNS zone via your provider's API — no inbound HTTP traffic required. You only need to fill in the section for the single provider you are using; all other sections can remain empty.
+
+<Tip>
+  **Cloudflare is the recommended DNS provider for Saltbox.** It offers a generous free tier, an excellent API, fast DNS propagation, and optional CDN proxying that hides your origin IP. If you do not already have a DNS provider preference, pointing your domain's nameservers to Cloudflare and using it here gives you the smoothest experience. Cloudflare credentials are also set in `accounts.yml`, so no additional `providers.yml` entry is needed for Cloudflare users.
+</Tip>
+
+## How Provider Selection Works
+
+The provider that Traefik uses is determined by the `traefik.provider` field in `adv_settings.yml` (default: `cloudflare`). Whatever value is set there, Saltbox expects the matching key in `providers.yml` to have valid credentials populated. For example, if `traefik.provider: hetzner`, then `providers.yml` must have a non-empty `hetzner.api_key`.
+
+<Note>
+  If you are using **Cloudflare** as your provider, your credentials are already provided in `accounts.yml` under `cloudflare.email` and `cloudflare.api`. You do **not** need to duplicate them in `providers.yml` — the `cloudflare` section here is only relevant if your `accounts.yml` Cloudflare fields are empty and you want to drive certificate issuance from `providers.yml` directly.
+</Note>
+
+## Full Default File
+
+```yaml
+---
+cloudns:
+  client_id:
+  email:
+  password:
+duckdns:
+  token:
+dynu:
+  api_key:
+godaddy:
+  api_key:
+  api_secret:
+hetzner:
+  api_key:
+linode:
+  token:
+namecheap:
+  api_key:
+  api_user:
+namedotcom:
+  api_token:
+  server: api.name.com
+  username:
+netcup:
+  api_key:
+  api_password:
+  customer_number:
+porkbun:
+  api_key:
+  secret_key:
+powerdns:
+  api_key:
+  api_url:
+```
+
+## Supported Providers
+
+<CardGroup cols={2}>
+  <Card title="Cloudflare" icon="cloud">
+    Global API Key + account email. Free tier available. Recommended for most Saltbox users.
+  </Card>
+  <Card title="Porkbun" icon="tag">
+    API key + secret key. Affordable registrar with a clean API.
+  </Card>
+  <Card title="Hetzner" icon="server">
+    API key only. Good choice if you host your servers on Hetzner.
+  </Card>
+  <Card title="Namecheap" icon="globe">
+    API key + API username. Requires whitelist of your IP in Namecheap settings.
+  </Card>
+  <Card title="GoDaddy" icon="building">
+    API key + API secret. Widely used registrar.
+  </Card>
+  <Card title="Linode / Akamai" icon="network-wired">
+    Personal access token only.
+  </Card>
+  <Card title="Dynu" icon="link">
+    API key only. Free dynamic DNS with custom domain support.
+  </Card>
+  <Card title="DuckDNS" icon="duck">
+    Token only. Free subdomain DNS service.
+  </Card>
+</CardGroup>
+
+---
+
+### Cloudflare
+
+Set `traefik.provider: cloudflare` in `adv_settings.yml`.
+
+```yaml
+# Not required in providers.yml for standard Saltbox setups —
+# use accounts.yml cloudflare.email and cloudflare.api instead.
+```
+
+If you wish to configure Cloudflare solely via `providers.yml`, add:
+
+```yaml
+# providers.yml — Cloudflare (alternative to accounts.yml fields)
+cloudflare:
+  email: you@example.com
+  api: your_global_api_key_here
+```
+
+<ParamField path="cloudflare.email" type="string">
+  The email address for your Cloudflare account.
+</ParamField>
+
+<ParamField path="cloudflare.api" type="string">
+  Your Cloudflare **Global API Key** (not a scoped API token). Found under **My Profile → API Tokens → Global API Key** in the Cloudflare dashboard.
+</ParamField>
+
+---
+
+### ClouDNS
+
+Set `traefik.provider: cloudns` in `adv_settings.yml`.
+
+```yaml
+cloudns:
+  client_id: 12345
+  email: you@example.com
+  password: your_cloudns_password
+```
+
+<ParamField path="cloudns.client_id" type="string" required>
+  Your ClouDNS client (sub-auth user) ID.
+</ParamField>
+
+<ParamField path="cloudns.email" type="string" required>
+  The email address associated with your ClouDNS account.
+</ParamField>
+
+<ParamField path="cloudns.password" type="string" required>
+  Your ClouDNS account or sub-auth password.
+</ParamField>
+
+---
+
+### DuckDNS
+
+Set `traefik.provider: duckdns` in `adv_settings.yml`.
+
+```yaml
+duckdns:
+  token: your_duckdns_token
+```
+
+<ParamField path="duckdns.token" type="string" required>
+  Your DuckDNS account token, found on your DuckDNS dashboard at `https://www.duckdns.org/`.
+</ParamField>
+
+---
+
+### Dynu
+
+Set `traefik.provider: dynu` in `adv_settings.yml`.
+
+```yaml
+dynu:
+  api_key: your_dynu_api_key
+```
+
+<ParamField path="dynu.api_key" type="string" required>
+  Your Dynu API key, found in the Dynu control panel under **API Credentials**.
+</ParamField>
+
+---
+
+### GoDaddy
+
+Set `traefik.provider: godaddy` in `adv_settings.yml`.
+
+```yaml
+godaddy:
+  api_key: your_godaddy_api_key
+  api_secret: your_godaddy_api_secret
+```
+
+<ParamField path="godaddy.api_key" type="string" required>
+  Your GoDaddy API key. Generate one at [https://developer.godaddy.com/keys](https://developer.godaddy.com/keys). Use an **OTE** key for testing or a **Production** key for live domains.
+</ParamField>
+
+<ParamField path="godaddy.api_secret" type="string" required>
+  The API secret paired with your GoDaddy API key.
+</ParamField>
+
+---
+
+### Hetzner
+
+Set `traefik.provider: hetzner` in `adv_settings.yml`.
+
+```yaml
+hetzner:
+  api_key: your_hetzner_dns_api_key
+```
+
+<ParamField path="hetzner.api_key" type="string" required>
+  A Hetzner DNS API token. Create one in the [Hetzner DNS Console](https://dns.hetzner.com/) under **Access → API Tokens**. Note that this is separate from the Hetzner Cloud API token.
+</ParamField>
+
+---
+
+### Linode (Akamai Cloud)
+
+Set `traefik.provider: linode` in `adv_settings.yml`.
+
+```yaml
+linode:
+  token: your_linode_personal_access_token
+```
+
+<ParamField path="linode.token" type="string" required>
+  A Linode personal access token with **DNS Read/Write** scope. Generate one in the Linode Cloud Manager under **Profile → API Tokens → Create a Personal Access Token**.
+</ParamField>
+
+---
+
+### Namecheap
+
+Set `traefik.provider: namecheap` in `adv_settings.yml`.
+
+```yaml
+namecheap:
+  api_key: your_namecheap_api_key
+  api_user: your_namecheap_username
+```
+
+<Warning>
+  Namecheap requires your server's public IP address to be whitelisted in your Namecheap account before API calls are accepted. Add it under **Profile → Tools → Namecheap API Access → Whitelisted IPs**.
+</Warning>
+
+<ParamField path="namecheap.api_key" type="string" required>
+  Your Namecheap API key, found in your Namecheap account under **Profile → Tools → API Access**.
+</ParamField>
+
+<ParamField path="namecheap.api_user" type="string" required>
+  Your Namecheap account username (same as your login username).
+</ParamField>
+
+---
+
+### Name.com
+
+Set `traefik.provider: namedotcom` in `adv_settings.yml`.
+
+```yaml
+namedotcom:
+  api_token: your_namedotcom_api_token
+  server: api.name.com
+  username: your_namedotcom_username
+```
+
+<ParamField path="namedotcom.api_token" type="string" required>
+  Your Name.com API token. Generate one in your Name.com account under **Account → API Tokens**.
+</ParamField>
+
+<ParamField path="namedotcom.username" type="string" required>
+  Your Name.com account username.
+</ParamField>
+
+<ParamField path="namedotcom.server" type="string" default="api.name.com">
+  The Name.com API server URL. The default `api.name.com` is correct for production. Use `api.dev.name.com` for testing with a Name.com development account.
+</ParamField>
+
+---
+
+### Netcup
+
+Set `traefik.provider: netcup` in `adv_settings.yml`.
+
+```yaml
+netcup:
+  api_key: your_netcup_api_key
+  api_password: your_netcup_api_password
+  customer_number: "123456"
+```
+
+<ParamField path="netcup.api_key" type="string" required>
+  Your Netcup API key, generated in the Netcup Customer Control Panel (CCP).
+</ParamField>
+
+<ParamField path="netcup.api_password" type="string" required>
+  Your Netcup API password, set alongside the API key in the CCP.
+</ParamField>
+
+<ParamField path="netcup.customer_number" type="string" required>
+  Your Netcup customer number (Kundennummer), visible in the CCP dashboard.
+</ParamField>
+
+---
+
+### Porkbun
+
+Set `traefik.provider: porkbun` in `adv_settings.yml`.
+
+```yaml
+porkbun:
+  api_key: pk1_your_porkbun_api_key
+  secret_key: sk1_your_porkbun_secret_key
+```
+
+<ParamField path="porkbun.api_key" type="string" required>
+  Your Porkbun API key (prefixed with `pk1_`). Enable API access and generate the key in your Porkbun account under **API Access**.
+</ParamField>
+
+<ParamField path="porkbun.secret_key" type="string" required>
+  Your Porkbun API secret key (prefixed with `sk1_`), displayed once at creation time. Store it securely — it cannot be retrieved again from the Porkbun dashboard.
+</ParamField>
+
+---
+
+### PowerDNS
+
+Set `traefik.provider: powerdns` in `adv_settings.yml`. Saltbox internally remaps this to `pdns` for configuration compatibility.
+
+```yaml
+powerdns:
+  api_key: your_powerdns_api_key
+  api_url: https://pdns.example.com
+```
+
+<ParamField path="powerdns.api_key" type="string" required>
+  The PowerDNS API key configured in your PowerDNS server (`api-key` in `pdns.conf`).
+</ParamField>
+
+<ParamField path="powerdns.api_url" type="string" required>
+  The base URL of your PowerDNS API endpoint, including the scheme and host (e.g. `https://pdns.yourdomain.com`). The Traefik LEGO client appends the standard PowerDNS API path automatically.
+</ParamField>
+
+---
+
+## Editing providers.yml
+
+```bash
+nano /srv/git/saltbox/providers.yml
+```
+
+Only fill in the section for the provider you have set in `adv_settings.yml` under `traefik.provider`. Leave all other provider sections blank — empty fields are ignored.
+
+<Warning>
+  Like `accounts.yml`, `providers.yml` contains API secrets. Keep it out of version control and restrict read access to the file with `chmod 600 /srv/git/saltbox/providers.yml`.
+</Warning>

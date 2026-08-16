@@ -1,0 +1,235 @@
+---
+title: "Download Clients: NZB and Torrent Setup in Saltbox"
+sidebarTitle: "Download Clients"
+description: "Deploy SABnzbd, NZBGet, qBittorrent, or Deluge as Docker containers. Each integrates with Arr apps and optionally routes traffic through Gluetun VPN."
+---
+
+Saltbox ships first-class support for both Usenet and BitTorrent download clients. Every client is deployed as a Docker container behind Traefik, pre-configured with the correct download paths derived from your `settings.yml`, and protected by the global SSO middleware. Arr apps connect to clients over the internal Docker network using each client's container name as the hostname, so no host-IP or port-forwarding tricks are required.
+
+## Download Paths
+
+The base download location is set in `settings.yml.default`:
+
+```yaml
+downloads: /mnt/unionfs/downloads
+```
+
+Override it in your own `settings.yml`. Saltbox automatically creates subdirectories under this path for each client:
+
+| Client | Usenet path | Torrent path |
+|---|---|---|
+| SABnzbd | `downloads/nzbs/sabnzbd/` | — |
+| NZBGet | `downloads/nzbs/nzbget/` | — |
+| qBittorrent | — | `downloads/torrents/qbittorrent/` |
+| Deluge | — | `downloads/torrents/deluge/` |
+
+---
+
+## Usenet Clients
+
+<CardGroup cols={2}>
+  <Card title="SABnzbd" icon="bolt">
+    High-performance Usenet binary newsreader. Integrates with Sonarr, Radarr, and Lidarr out of the box.
+  </Card>
+  <Card title="NZBGet" icon="download">
+    Lightweight, highly configurable Usenet downloader. Ships with pre-configured post-processing scripts for the Arr suite.
+  </Card>
+</CardGroup>
+
+### SABnzbd
+
+SABnzbd is deployed from `ghcr.io/hotio/sabnzbd` and accessible at `sabnzbd.<domain>` after installation.
+
+<Steps>
+  <Step title="Install SABnzbd">
+    ```bash
+    ansible-playbook saltbox.yml --tags sabnzbd
+    ```
+  </Step>
+  <Step title="Open the UI">
+    Navigate to `https://sabnzbd.<your-domain>`. The SSO middleware will prompt for credentials on first access.
+  </Step>
+  <Step title="Add a Usenet provider">
+    Go to **Config → Servers** and enter your news provider credentials.
+  </Step>
+  <Step title="Connect to Arr apps">
+    In Sonarr/Radarr use the internal URL `http://sabnzbd:8080` as the download client address.
+  </Step>
+</Steps>
+
+SABnzbd runs on port `8080` inside the container. Saltbox pre-configures the download directories and whitelists the Traefik subdomain automatically:
+
+```yaml
+sabnzbd_role_config_settings_default:
+  - { option: "complete_dir",  value: "/mnt/unionfs/downloads/nzbs/sabnzbd/complete" }
+  - { option: "download_dir",  value: "/mnt/unionfs/downloads/nzbs/sabnzbd/incomplete" }
+  - { option: "dirscan_dir",   value: "/mnt/unionfs/downloads/nzbs/sabnzbd/watch" }
+```
+
+### NZBGet
+
+NZBGet is deployed from `ghcr.io/hotio/nzbget` and accessible at `nzbget.<domain>`.
+
+<Steps>
+  <Step title="Install NZBGet">
+    ```bash
+    ansible-playbook saltbox.yml --tags nzbget
+    ```
+  </Step>
+  <Step title="Open the UI">
+    Navigate to `https://nzbget.<your-domain>`. Login uses your Saltbox `user.name` and `user.pass`.
+  </Step>
+  <Step title="Add a Usenet provider">
+    Go to **Settings → News-Servers** and add your provider credentials.
+  </Step>
+  <Step title="Connect to Arr apps">
+    Use `http://nzbget:6789` as the download client URL with your credentials.
+  </Step>
+</Steps>
+
+NZBGet runs on port `6789`. Saltbox installs several post-processing scripts automatically including `flatten.py`, `DeleteSamples.py`, `HashRenamer.py`, and `reverse_name.py`. Pre-defined categories (`movies`, `series`, `music`, `sonarr`, `radarr`, `lidarr`) are created on fresh installs.
+
+### NZBThrottle
+
+NZBThrottle is a lightweight throttling proxy for Usenet providers:
+
+```bash
+ansible-playbook saltbox.yml --tags nzbthrottle
+```
+
+---
+
+## Torrent Clients
+
+<CardGroup cols={2}>
+  <Card title="qBittorrent" icon="magnet">
+    Modern, actively maintained torrent client with a clean web UI. Supports libtorrent v1 and v2, sequential downloading, and per-torrent speed limits.
+  </Card>
+  <Card title="Deluge" icon="cloud-arrow-down">
+    Lightweight Python-based torrent client with extensive plugin support. Good choice for lower-resource setups.
+  </Card>
+</CardGroup>
+
+### qBittorrent
+
+qBittorrent is deployed from the `saltydk/qbittorrent` image and accessible at `qbittorrent.<domain>`.
+
+<Steps>
+  <Step title="Install qBittorrent">
+    ```bash
+    ansible-playbook saltbox.yml --tags qbittorrent
+    ```
+  </Step>
+  <Step title="Open the UI">
+    Navigate to `https://qbittorrent.<your-domain>`.
+  </Step>
+  <Step title="Connect to Arr apps">
+    In Sonarr/Radarr add qBittorrent as a download client using `http://qbittorrent:8080`.
+  </Step>
+</Steps>
+
+qBittorrent exposes the BitTorrent listening port (`56881` by default) for both TCP and UDP directly on the host:
+
+```yaml
+qbittorrent_role_docker_ports_default:
+  - "56881:56881"
+  - "56881:56881/udp"
+```
+
+The web UI runs on port `8080` inside the container. You can also choose to run qBittorrent as a host binary instead of a container by setting `qbittorrent_role_host_install: true` in inventory and selecting the libtorrent branch:
+
+```yaml
+# libtorrent1 (default), libtorrent2, or legacy (4.3.9)
+qbittorrent_role_host_branch: libtorrent1
+```
+
+### Deluge
+
+```bash
+ansible-playbook saltbox.yml --tags deluge
+```
+
+Deluge is accessible at `https://deluge.<your-domain>`.
+
+### ruTorrent
+
+ruTorrent (rTorrent + web UI) is available in the Saltbox ecosystem and can be deployed as an additional client when needed.
+
+---
+
+## VPN Routing with Gluetun
+
+Gluetun is a VPN client container that acts as a network gateway. Torrent clients can be routed through it so that all BitTorrent traffic exits via the VPN without affecting other services.
+
+<Steps>
+  <Step title="Configure Gluetun in inventory">
+    ```yaml
+    # inventory/host_vars/localhost.yml
+    gluetun_role_vpn_service_provider: "mullvad"   # your provider
+    gluetun_role_vpn_type: "wireguard"
+    gluetun_role_wireguard_private_key: "YOUR_KEY"
+    gluetun_role_server_countries: "Netherlands"
+    ```
+  </Step>
+  <Step title="Deploy Gluetun">
+    ```bash
+    ansible-playbook saltbox.yml --tags gluetun
+    ```
+  </Step>
+  <Step title="Route a client through Gluetun">
+    Set the torrent client's `network_mode` to use Gluetun's network stack. In inventory:
+    ```yaml
+    qbittorrent_role_docker_networks_custom:
+      - name: "container:gluetun"
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Gluetun supports dozens of providers (Mullvad, NordVPN, ProtonVPN, Private Internet Access, and many more) via both OpenVPN and WireGuard. The Gluetun role exposes every upstream configuration option as an Ansible variable — consult the [Gluetun wiki](https://github.com/qdm12/gluetun-wiki) for provider-specific settings.
+</Note>
+
+Gluetun also starts a built-in HTTP proxy on port `8888` (enabled by default with `gluetun_role_httpproxy: "on"`), which can be used to route the Plex auth-token request through the VPN if needed:
+
+```yaml
+plex_role_auth_token_proxy: "http://gluetun:8888"
+```
+
+---
+
+## Autobrr
+
+Autobrr is a modern torrent automation tool that watches IRC announce channels and injects matching torrents directly into your download client — bypassing RSS delays entirely.
+
+```bash
+ansible-playbook saltbox.yml --tags autobrr
+```
+
+Autobrr is accessible at `https://autobrr.<your-domain>`. Connect it to qBittorrent or Deluge via the download client settings, and configure filters that match your Sonarr/Radarr requirements.
+
+---
+
+## Install All Download Clients
+
+The `download-clients` meta-tag installs the full default download-client set in one run:
+
+```bash
+ansible-playbook saltbox.yml --tags download-clients
+```
+
+---
+
+## Connecting Arr Apps
+
+All clients are reachable from other containers on the internal Docker network by container name. Use these URLs when adding download clients in Sonarr, Radarr, or Lidarr:
+
+| Client | Internal URL | Port |
+|---|---|---|
+| SABnzbd | `http://sabnzbd:8080` | 8080 |
+| NZBGet | `http://nzbget:6789` | 6789 |
+| qBittorrent | `http://qbittorrent:8080` | 8080 |
+| Deluge | `http://deluge:8112` | 8112 |
+
+<Tip>
+  Always use the container name (not `localhost` or the host IP) when configuring download clients inside Arr apps. Docker's internal DNS resolves container names reliably within the shared `saltbox` network.
+</Tip>

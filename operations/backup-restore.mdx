@@ -1,0 +1,186 @@
+---
+title: "How to Backup and Restore Your Saltbox Installation"
+sidebarTitle: "Backup & Restore"
+description: "Saltbox provides automated backup of all Docker appdata with local, rclone cloud, and rsync destinations. Schedule backups via cron or run them on demand."
+---
+
+Saltbox includes a built-in backup and restore system that archives every Docker container's configuration data from `/opt/` into compressed tarballs. Backups can be stored locally, uploaded to a cloud provider via rclone, or synced to a remote server via rsync — all configured through a single `backup_config.yml` file.
+
+<Warning>
+  The backup system protects your **application configuration and appdata** stored under `/opt/`. It does **not** back up media files. Media is stored on cloud storage via rclone and does not need to be included in the Saltbox backup.
+</Warning>
+
+## What Gets Backed Up
+
+The backup role archives every subdirectory inside `/opt/` — one `.tar` file per application — along with your Saltbox configuration files:
+
+- All service appdata directories under `/opt/` (Sonarr, Radarr, Plex, SABnzbd, etc.)
+- `accounts.yml`, `settings.yml`, `adv_settings.yml`, `backup_config.yml`, `providers.yml`
+- `rclone.conf` — your rclone remote configuration
+- `inventories/host_vars/localhost.yml` — host-level variable overrides
+- Systemd unit files from `/etc/systemd/system/`
+- Crontab entries
+
+During the backup, all Saltbox-managed Docker containers are gracefully stopped (except reverse proxy and torrent apps), the archives are created, and then containers are restarted before the upload begins. If BTRFS snapshots are enabled, containers are restarted even sooner — immediately after the snapshot is taken.
+
+## Configuring Backups
+
+Backup settings live in `/srv/git/saltbox/backup_config.yml`. If that file does not exist, Saltbox falls back to the defaults shown below. Edit this file before your first backup run.
+
+```yaml
+---
+backup:
+  cron:
+    cron_time: weekly
+  local:
+    destination: /home/{{ user.name }}/Backups/Saltbox
+    enable: true
+  misc:
+    snapshot: true
+  rclone:
+    destination: google:/Backups/Saltbox
+    enable: true
+    template: google
+  restore_service:
+    pass:
+    user:
+  rsync:
+    destination: rsync://somehost.com/Backups/Saltbox
+    enable: false
+    port: 22
+```
+
+### Configuration Reference
+
+<ParamField path="backup.local.enable" type="boolean" default="true">
+  Enable saving a local copy of the backup on the server itself.
+</ParamField>
+
+<ParamField path="backup.local.destination" type="string" default="/home/<user>/Backups/Saltbox">
+  Filesystem path where the local backup tarballs are written. The previous backup is moved to `<destination>.old` before each new run.
+</ParamField>
+
+<ParamField path="backup.rclone.enable" type="boolean" default="true">
+  Enable uploading the backup to a cloud provider using rclone after the local backup is created.
+</ParamField>
+
+<ParamField path="backup.rclone.destination" type="string" default="google:/Backups/Saltbox">
+  The rclone remote path to upload the backup to. Must match a configured remote in `rclone.conf`.
+</ParamField>
+
+<ParamField path="backup.rclone.template" type="string" default="google">
+  The rclone config template to use for the upload. Corresponds to a template defined in your rclone settings.
+</ParamField>
+
+<ParamField path="backup.rsync.enable" type="boolean" default="false">
+  Enable syncing the backup to a remote server via rsync.
+</ParamField>
+
+<ParamField path="backup.rsync.destination" type="string" default="rsync://somehost.com/Backups/Saltbox">
+  The rsync server URI for the remote backup destination.
+</ParamField>
+
+<ParamField path="backup.rsync.port" type="integer" default="22">
+  SSH port used for the rsync connection.
+</ParamField>
+
+<ParamField path="backup.cron.cron_time" type="string" default="weekly">
+  Backup schedule. Accepts `daily`, `weekly`, or `monthly` (cron special times), or a standard cron expression such as `0 4 * * 0`.
+</ParamField>
+
+<ParamField path="backup.misc.snapshot" type="boolean" default="true">
+  Use a BTRFS subvolume snapshot when `/opt/` is on a BTRFS filesystem. This allows Docker containers to restart immediately after the snapshot is taken rather than waiting for all archives to finish.
+</ParamField>
+
+<ParamField path="backup.restore_service.user" type="string">
+  Username for the Saltbox Restore Service web interface. Required only if you plan to use the remote restore feature.
+</ParamField>
+
+<ParamField path="backup.restore_service.pass" type="string">
+  Password for the Saltbox Restore Service web interface.
+</ParamField>
+
+## Running a Backup
+
+<Steps>
+  <Step title="Edit backup_config.yml">
+    Open `/srv/git/saltbox/backup_config.yml` and verify your destinations and schedule. At minimum, confirm that `backup.rclone.destination` points to a configured rclone remote.
+  </Step>
+  <Step title="Run the backup playbook">
+    Execute the backup tag from the Saltbox directory:
+
+    ```bash
+    cd /srv/git/saltbox
+    ansible-playbook saltbox.yml --tags backup
+    ```
+
+    This is the primary backup method. An alternative method using a separate playbook file is also available:
+
+    ```bash
+    ansible-playbook backup.yml --tags backup
+    ```
+
+    A second backup variant (`backup2`) is available for alternative backup configurations:
+
+    ```bash
+    ansible-playbook saltbox.yml --tags backup2
+    ```
+  </Step>
+  <Step title="Monitor progress">
+    The playbook logs progress to the terminal. A notification is sent (if a notifier is configured) when the backup starts, when containers are stopped and restarted, and when the upload completes. The rclone upload log is written to `/srv/git/saltbox/backup_rclone.log`.
+  </Step>
+</Steps>
+
+## Scheduling Automated Backups
+
+Saltbox can install a cron job that runs the backup automatically on the schedule defined in `backup.cron.cron_time`.
+
+**Create the cron job:**
+
+```bash
+ansible-playbook saltbox.yml --tags set-backup
+```
+
+**Remove the cron job:**
+
+```bash
+ansible-playbook saltbox.yml --tags unset-backup
+```
+
+The cron entry runs as the Saltbox user and appends output to `/srv/git/saltbox/saltbox_backup.log`.
+
+## Restoring from Backup
+
+The restore role downloads your backup from the rclone remote (if no local backup is present), extracts each `.tar` archive back into `/opt/`, and resets ownership and permissions.
+
+<Steps>
+  <Step title="Ensure Saltbox is installed">
+    The restore role requires that the core Saltbox roles (at minimum `user` and `shell`) have already run on the target machine. If restoring to a fresh server, run the `preinstall` tag first.
+  </Step>
+  <Step title="Configure backup_config.yml">
+    Make sure `backup_config.yml` contains the same `rclone.destination` that was used when the backup was created, and that `rclone.conf` is present with valid credentials.
+  </Step>
+  <Step title="Run the restore playbook">
+    ```bash
+    cd /srv/git/saltbox
+    ansible-playbook saltbox.yml --tags restore
+    ```
+
+    The restore role will:
+    1. Download the backup from the rclone remote if no local copy exists
+    2. Rename any existing appdata folders to `<name>_bak` to prevent data loss
+    3. Extract all `.tar` archives into `/opt/`
+    4. Reset ownership and permissions on the restored data
+  </Step>
+  <Step title="Continue the install">
+    After the restore completes, re-run your desired install tag (e.g., `saltbox`, `mediabox`, or individual app tags) to recreate Docker containers pointing to the restored configuration.
+  </Step>
+</Steps>
+
+### Saltbox Restore Service
+
+The Saltbox Restore Service is an optional web-based interface that allows you to initiate a restore remotely without needing direct SSH access to fetch backup files. Configure the `restore_service.user` and `restore_service.pass` fields in `backup_config.yml` to enable it.
+
+<Note>
+  The restore service credentials are separate from your server login. Choose a strong, unique password since the service exposes backup retrieval over the network.
+</Note>

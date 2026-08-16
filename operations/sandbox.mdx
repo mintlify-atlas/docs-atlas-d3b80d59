@@ -1,0 +1,105 @@
+---
+title: "Saltbox Sandbox: Community-Maintained Applications"
+sidebarTitle: "Sandbox"
+description: "The Saltbox Sandbox extends the core install with community-maintained roles for additional applications not included in the main Saltbox repository."
+---
+
+The Saltbox Sandbox is a separate Git repository — [`saltyorg/sandbox`](https://github.com/saltyorg/sandbox) — containing community-contributed Ansible roles for applications that are not part of the core Saltbox project. Once installed, Sandbox gives you access to its own `sandbox.yml` playbook and a library of extra roles you can run exactly like core Saltbox tags.
+
+<Note>
+  Sandbox roles are maintained by community contributors rather than the core Saltbox team. They follow the same role structure and conventions as core roles, but may receive less frequent updates and have a smaller support surface. Check the Saltbox Discord for help with specific Sandbox apps.
+</Note>
+
+## How Sandbox Integrates with Saltbox
+
+The `sandbox` role is included in the core `saltbox.yml` playbook and runs as part of every full install (`saltbox`, `mediabox`, `feederbox` tags). It clones the Sandbox repository from GitHub into `/opt/sandbox/` and activates Git hooks so the repository stays manageable.
+
+When the clone completes, the Sandbox `sandbox.yml` playbook becomes available at `/opt/sandbox/sandbox.yml`. All Sandbox apps are invoked through this playbook, not through the core `saltbox.yml`.
+
+## Installing Sandbox
+
+If you skipped the full install or need to set up Sandbox independently, run:
+
+```bash
+cd /srv/git/saltbox
+ansible-playbook saltbox.yml --tags sandbox
+```
+
+This will:
+
+1. Create the `/opt/sandbox/` directory with the correct ownership
+2. Clone `https://github.com/saltyorg/sandbox.git` into `/opt/sandbox/`
+3. Activate Git hooks for the repository
+
+## Using Sandbox Apps
+
+<Steps>
+  <Step title="Install Sandbox (if not already done)">
+    Confirm `/opt/sandbox/sandbox.yml` exists. If not, run the sandbox tag as shown above.
+  </Step>
+  <Step title="Find the app tag">
+    Browse the [Sandbox repository](https://github.com/saltyorg/sandbox) on GitHub to find the role name for the application you want. Each role directory name is also its playbook tag.
+  </Step>
+  <Step title="Run the Sandbox playbook with the app tag">
+    ```bash
+    ansible-playbook /opt/sandbox/sandbox.yml --tags <app-name>
+    ```
+
+    For example, to install the `tdarr` transcoding application:
+
+    ```bash
+    ansible-playbook /opt/sandbox/sandbox.yml --tags tdarr
+    ```
+  </Step>
+  <Step title="Access the application">
+    Like all Saltbox-managed apps, Sandbox applications are automatically registered with Traefik and receive a subdomain based on your configured domain. Check the role's `defaults/main.yml` in the Sandbox repository for the default subdomain name.
+  </Step>
+</Steps>
+
+## What Sandbox Provides
+
+Sandbox roles cover applications across every area of the media server stack. Common categories include:
+
+<CardGroup cols={2}>
+  <Card title="Media Management" icon="film">
+    Alternative and supplemental arr-stack tools, additional media managers, and specialized content organizers not included in the core install.
+  </Card>
+  <Card title="Download Clients" icon="download">
+    Alternative torrent and Usenet clients, VPN-wrapped download client variants, and supporting utilities.
+  </Card>
+  <Card title="Monitoring & Utilities" icon="chart-line">
+    Additional dashboards, log viewers, system monitoring tools, and automation helpers.
+  </Card>
+  <Card title="Community Experiments" icon="flask">
+    Cutting-edge or niche applications contributed by community members that may graduate to the core repository over time.
+  </Card>
+</CardGroup>
+
+## Keeping Sandbox Updated
+
+Sandbox roles follow the same update pattern as core Saltbox roles. To update the Sandbox repository itself:
+
+```bash
+cd /opt/sandbox
+git pull
+```
+
+To re-run (and update) a specific Sandbox application:
+
+```bash
+ansible-playbook /opt/sandbox/sandbox.yml --tags <app-name>
+```
+
+## Custom Roles
+
+The `custom` tag in the core `saltbox.yml` playbook provides a hook for running your own Ansible roles that live outside both the core Saltbox and Sandbox repositories:
+
+```bash
+ansible-playbook saltbox.yml --tags custom
+```
+
+The `custom` role can install additional apt packages, deb packages, and pip modules as defined in your local configuration. This is useful for system-level customizations that do not fit neatly into any existing role.
+
+<Tip>
+  Before writing a fully custom role, check the Sandbox repository — the app you need may already exist there. Sandbox is actively growing and is the preferred place for community app contributions.
+</Tip>

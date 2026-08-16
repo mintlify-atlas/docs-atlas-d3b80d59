@@ -1,0 +1,136 @@
+---
+title: "Configure accounts.yml: Users, Domain, and API Keys"
+sidebarTitle: "Accounts"
+description: "Set up your Saltbox accounts.yml file with your domain, email, user credentials, Cloudflare API key, and DockerHub token before running the playbook."
+---
+
+Before you run any Saltbox playbook tags, you must fill in `accounts.yml` with your personal details. This file tells Saltbox which Linux user to create, which domain to use for subdomain routing through Traefik, where to register your TLS certificates, and which third-party service credentials to use. Every field here is read by the Ansible playbook at runtime, so the file must be complete and accurate before you execute `saltbox install`.
+
+<Warning>
+  `accounts.yml` contains sensitive credentials including passwords and API keys. **Never commit this file to version control** or share it publicly. Store a secure backup of it somewhere private (e.g. an encrypted password manager).
+</Warning>
+
+## Full Default File
+
+```yaml
+---
+apprise:
+cloudflare:
+  api:
+  email:
+dockerhub:
+  token:
+  user:
+user:
+  domain: testsaltbox.ml
+  email: your@email.com
+  name: seed
+  pass: password1234
+  ssh_key:
+```
+
+## User Settings
+
+These fields define the Linux user account that Saltbox creates on your server, as well as the domain and email used for all service routing and TLS certificate registration.
+
+<ParamField path="user.name" type="string" default="seed">
+  The Linux username Saltbox will create on your server. This user will own all application data directories under `/opt` and run the Docker containers. Change this to a username of your choice — avoid `root`.
+</ParamField>
+
+<ParamField path="user.pass" type="string" required>
+  The password for the Linux user account. Choose a strong, unique password. This is used to set up the user via the Ansible playbook and is stored in plaintext in this file, so protect access to it accordingly.
+</ParamField>
+
+<ParamField path="user.domain" type="string" required>
+  Your registered domain name (e.g. `yourdomain.com`). Saltbox and Traefik will automatically create subdomains under this domain for every service you deploy — for example, `plex.yourdomain.com`, `sonarr.yourdomain.com`, and so on. The domain must be pointed at your server's IP address (or managed through Cloudflare) before services can be accessed.
+</ParamField>
+
+<ParamField path="user.email" type="string" required>
+  Your email address. This is used when registering TLS certificates with Let's Encrypt (or ZeroSSL). Let's Encrypt uses this to send expiry notifications and for account recovery. Use a real, actively monitored address.
+</ParamField>
+
+<ParamField path="user.ssh_key" type="string">
+  An optional SSH public key to add to the user's `~/.ssh/authorized_keys` file. Paste the full contents of your public key (e.g. the contents of `~/.ssh/id_ed25519.pub`). Leave blank if you manage SSH keys separately.
+</ParamField>
+
+## Cloudflare Settings
+
+Saltbox uses Cloudflare's DNS API to automatically create DNS records for your subdomains and to perform the ACME DNS-01 TLS challenge. You need a Cloudflare account with your domain's DNS managed there.
+
+<Note>
+  The `cloudflare` fields are only required if you are using Cloudflare as your DNS provider. If you use a different provider (Hetzner, Linode, Namecheap, etc.), leave these blank and configure your provider in `providers.yml` and `adv_settings.yml` instead.
+</Note>
+
+<ParamField path="cloudflare.email" type="string">
+  The email address associated with your Cloudflare account. This is used alongside your Global API Key to authenticate with the Cloudflare API.
+</ParamField>
+
+<ParamField path="cloudflare.api" type="string">
+  Your Cloudflare **Global API Key** (not an API Token). Find it in the Cloudflare dashboard under **My Profile → API Tokens → Global API Key**. This key grants Saltbox permission to create and update DNS records for your domain automatically.
+</ParamField>
+
+## DockerHub Settings
+
+DockerHub enforces rate limits on unauthenticated image pulls (100 pulls per 6 hours for anonymous users, 200 for free accounts). When Saltbox installs or updates many containers, it can hit these limits quickly. Providing DockerHub credentials removes this restriction.
+
+<ParamField path="dockerhub.user" type="string">
+  Your DockerHub username. Leave blank if you do not have a DockerHub account or do not wish to authenticate.
+</ParamField>
+
+<ParamField path="dockerhub.token" type="string">
+  A DockerHub **access token** (recommended) or your account password. Generate an access token from the DockerHub dashboard under **Account Settings → Security → New Access Token**. Using a token is preferred over a password for security.
+</ParamField>
+
+## Notifications
+
+<ParamField path="apprise" type="string">
+  An optional [Apprise](https://github.com/caronc/apprise) notification URL. Saltbox can send playbook completion and error notifications through any service Apprise supports — Discord, Slack, Telegram, email, and many more. 
+
+  **Examples:**
+  - Discord: `discord://webhook_id/webhook_token`
+  - Telegram: `tgram://bot_token/chat_id`
+  - Slack: `slack://tokenA/tokenB/tokenC/#channel`
+
+  Leave blank to disable notifications entirely.
+</ParamField>
+
+## Editing accounts.yml
+
+<Steps>
+  <Step title="Open the file">
+    ```bash
+    nano /srv/git/saltbox/accounts.yml
+    ```
+  </Step>
+  <Step title="Fill in your details">
+    Replace every placeholder value with your real credentials. At minimum, set `user.name`, `user.pass`, `user.domain`, `user.email`, and your `cloudflare` credentials.
+  </Step>
+  <Step title="Verify the syntax">
+    Run a quick YAML syntax check before proceeding:
+    ```bash
+    python3 -c "import yaml, sys; yaml.safe_load(open('/srv/git/saltbox/accounts.yml'))" && echo "OK"
+    ```
+  </Step>
+  <Step title="Run the playbook">
+    Once the file is saved and valid, continue with the Saltbox install process.
+  </Step>
+</Steps>
+
+## Completed Example
+
+```yaml
+---
+apprise: discord://123456789/abcdefghijklmnopqrstuvwxyz
+cloudflare:
+  api: abc123def456ghi789jkl012mno345pqr678
+  email: you@example.com
+dockerhub:
+  token: dckr_pat_xxxxxxxxxxxxxxxxxxxx
+  user: myusername
+user:
+  domain: example.com
+  email: you@example.com
+  name: mediauser
+  pass: Sup3rS3cur3P@ssw0rd!
+  ssh_key: ssh-ed25519 AAAAC3Nz... you@laptop
+```

@@ -1,0 +1,248 @@
+---
+title: "SSO and 2FA with Authelia and Authentik in Saltbox"
+sidebarTitle: "Authentication"
+description: "Saltbox deploys Authelia or Authentik as an SSO gateway protecting all services with single sign-on and optional two-factor authentication via TOTP or WebAuthn."
+---
+
+Every Saltbox service is protected behind Traefik, and Traefik delegates authentication to a configured SSO middleware. By default that middleware points to Authelia, a lightweight single-sign-on portal that supports one-factor (username + password) and two-factor (TOTP or WebAuthn) access policies. For larger setups that need OIDC, SAML, or more granular group-based policies, Authentik is available as a drop-in alternative. Both are deployed as Docker containers and reverse-proxied through Traefik with automatic TLS.
+
+---
+
+## How Authentication Works
+
+When a browser requests `https://sonarr.<domain>`, Traefik checks the request against the `traefik_default_sso_middleware` chain before forwarding it to the Sonarr container. If no valid session cookie is present, the user is redirected to the Authelia (or Authentik) login portal. After successful authentication, Authelia sets a session cookie scoped to your domain, and all subsequent requests to any protected service are passed through without another login prompt.
+
+```
+Browser → Traefik → Authelia (check session)
+                 ↓ authenticated
+              Sonarr container
+```
+
+API endpoints (e.g. `/api`, `/feed`, `/ping` in Arr apps) are exempted from SSO by their respective Traefik router rules, so inter-app communication and API clients continue to work using application-level API keys.
+
+---
+
+## Authelia
+
+<Tabs>
+  <Tab title="Installation">
+    <Steps>
+      <Step title="Install Authelia">
+        ```bash
+        ansible-playbook saltbox.yml --tags authelia
+        ```
+      </Step>
+      <Step title="Access the login portal">
+        Navigate to `https://login.<your-domain>` (the default subdomain configured in `settings.yml`).
+      </Step>
+      <Step title="Create your first user">
+        Edit `/opt/authelia/users_database.yml` to add user accounts, or configure LLDAP as the backend for a graphical user management interface.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Configuration">
+    Authelia's subdomain is controlled by the `authelia.subdomain` key in `settings.yml`:
+
+    ```yaml
+    # settings.yml
+    authelia:
+      master: yes
+      subdomain: login   # → https://login.<domain>
+    ```
+
+    The most commonly customised role variables are:
+
+    | Variable | Default | Description |
+    |---|---|---|
+    | `authelia_role_access_control_policy` | `one_factor` | Default policy: `one_factor` or `two_factor` |
+    | `authelia_role_authentication_backend` | `file` | Backend: `file` or `ldap` |
+    | `authelia_role_theme` | `auto` | UI theme: `light`, `dark`, `grey`, or `auto` |
+    | `authelia_role_log_level` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+    | `authelia_role_log_file_path` | `/config/authelia.log` | Path to the log file inside the container |
+    | `authelia_role_log_keep_stdout` | `true` | Also write logs to stdout (visible via `docker logs`) |
+    | `authelia_role_notifier` | `filesystem` | Notification backend: `filesystem` or `smtp` |
+    | `authelia_role_totp_disable` | `false` | Disable TOTP entirely |
+    | `authelia_role_webauthn_disable` | `false` | Disable WebAuthn entirely |
+
+    Set these in your Saltbox inventory file:
+
+    ```yaml
+    # inventory/host_vars/localhost.yml
+    authelia_role_access_control_policy: "two_factor"
+    authelia_role_theme: "dark"
+    authelia_role_authentication_backend: "ldap"
+    ```
+  </Tab>
+  <Tab title="Access Control">
+    Authelia applies a single default policy to all subdomains of your domain. The default (`one_factor`) requires only a valid username and password. Changing it to `two_factor` also requires a TOTP code or WebAuthn hardware key:
+
+    ```yaml
+    authelia_role_access_control_policy: "two_factor"
+    ```
+
+    You can also whitelist the Docker network or your server's public IP to bypass authentication entirely for local or container-to-container requests:
+
+    ```yaml
+    # Bypass auth from the saltbox Docker subnet (172.19.0.0/16)
+    authelia_role_access_control_whitelist_docker: true
+
+    # Bypass auth from your server's public IP
+    authelia_role_access_control_whitelist_host: true
+    ```
+  </Tab>
+  <Tab title="TOTP & WebAuthn">
+    TOTP (Time-based One-Time Passwords) and WebAuthn are both enabled by default. Users enroll by visiting the Authelia portal after logging in with their password.
+
+    TOTP settings:
+
+    ```yaml
+    authelia_role_totp_issuer: "login.example.com"
+    authelia_role_totp_algorithm: "SHA1"
+    authelia_role_totp_digits: "6"
+    authelia_role_totp_period: "30"
+    ```
+
+    WebAuthn (hardware keys, passkeys):
+
+    ```yaml
+    authelia_role_webauthn_disable: false
+    authelia_role_webauthn_display_name: "Authelia"
+    authelia_role_webauthn_timeout: "60s"
+    # Enable passkey login (passwordless)
+    authelia_role_webauthn_enable_passkey_login: false
+    ```
+
+    Duo Push authentication is also supported via the `authelia_role_duo_*` variables.
+  </Tab>
+</Tabs>
+
+### Users Database
+
+When using the `file` backend, user accounts are stored in `/opt/authelia/users_database.yml` inside the host appdata directory. The file is watched live — changes take effect within the `authelia_role_authentication_backend_refresh_interval` (default `5m`) without a container restart.
+
+### Maintenance Tags
+
+```bash
+# Reset all Authelia configuration (regenerates secrets, clears sessions)
+ansible-playbook saltbox.yml --tags authelia-reset
+
+# Reset LLDAP (when using the LDAP backend)
+ansible-playbook saltbox.yml --tags lldap-reset
+```
+
+---
+
+## LLDAP
+
+LLDAP is a lightweight LDAP server with a user-friendly web interface. It serves as Authelia's LDAP backend when you set `authelia_role_authentication_backend: "ldap"`.
+
+When LDAP is selected, Authelia's `depends_on` automatically includes both `authelia-redis` and `lldap`, ensuring the correct startup order:
+
+```yaml
+authelia_role_depends_on: "authelia-redis,lldap"
+```
+
+LLDAP provides a graphical interface for creating users and groups, which is especially useful when managing access for multiple household members.
+
+<Note>
+  The `lldap` role uses the `never` tag in `saltbox.yml`, meaning it is automatically deployed as a dependency when Authelia is configured for the `ldap` backend — you don't invoke it directly.
+</Note>
+
+---
+
+## Authentik
+
+Authentik is a full-featured identity provider supporting OIDC, SAML, OAuth2, LDAP, and SCIM. It is the recommended choice when you need to integrate third-party applications that require federated SSO, or when you want per-application flow customisation beyond what Authelia provides.
+
+<Tabs>
+  <Tab title="Installation">
+    <Steps>
+      <Step title="Install Authentik">
+        ```bash
+        ansible-playbook saltbox.yml --tags authentik
+        ```
+
+        Saltbox deploys the Authentik server, worker, a dedicated PostgreSQL instance (`authentik-postgres`), and a Redis instance (`authentik-redis`) automatically.
+      </Step>
+      <Step title="Access the web UI">
+        Navigate to `https://auth.<your-domain>` (the default subdomain for Authentik).
+      </Step>
+      <Step title="Complete initial setup">
+        Log in as `akadmin` with the bootstrap token printed in the container logs on first run, then set a permanent password.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Configuration">
+    Key inventory variables for Authentik:
+
+    | Variable | Default | Description |
+    |---|---|---|
+    | `authentik_role_web_subdomain` | `auth` | Subdomain for the Authentik UI |
+    | `authentik_role_postgres_deploy` | `true` | Deploy a dedicated Postgres container |
+    | `authentik_role_access_token_validity` | `24` | Default access token validity in hours |
+    | `authentik_role_email_host` | `localhost` | SMTP server for email notifications |
+    | `authentik_role_email_port` | `25` | SMTP port |
+
+    ```yaml
+    # inventory/host_vars/localhost.yml
+    authentik_role_email_host: "smtp.example.com"
+    authentik_role_email_port: "587"
+    authentik_role_email_username: "notifications@example.com"
+    authentik_role_email_password: "secret"
+    authentik_role_email_tls: "true"
+    ```
+  </Tab>
+  <Tab title="Outpost">
+    Authentik uses an embedded outpost proxy for Traefik forward-auth integration. Saltbox pre-configures the outpost Traefik labels automatically:
+
+    ```yaml
+    # Catches all /outpost.goauthentik.io/ paths at priority 99
+    traefik.http.routers.authentik-outpost.rule: >
+      Host(`auth.example.com`) && PathPrefix(`/outpost.goauthentik.io/`)
+    ```
+
+    After installing Authentik, create a Proxy Provider and Outpost in the Authentik admin UI, then set `traefik_default_sso_middleware` in `adv_settings.yml` to the Authentik forward-auth middleware name.
+  </Tab>
+</Tabs>
+
+### Maintenance
+
+```bash
+# Reset Authentik (redeploys the stack with fresh configuration)
+ansible-playbook saltbox.yml --tags authentik-reset
+```
+
+---
+
+## Choosing Between Authelia and Authentik
+
+| Feature | Authelia | Authentik |
+|---|---|---|
+| Resource usage | Low (~50 MB RAM) | Higher (~500 MB RAM + Postgres) |
+| Setup complexity | Simple | Moderate |
+| Two-factor (TOTP, WebAuthn) | ✅ | ✅ |
+| OIDC / OAuth2 Provider | Limited | ✅ Full |
+| SAML Provider | ❌ | ✅ |
+| User management UI | Via LLDAP | Built-in |
+| Per-application flows | Policy-based | Full flow editor |
+
+For most single-user or small-household Saltbox deployments, Authelia with the file backend is the simplest and most resource-efficient choice. Authentik is better suited to multi-tenant setups, organisations needing OIDC/SAML, or anyone who wants a full-featured identity platform.
+
+---
+
+## The SSO Middleware Variable
+
+All Saltbox application roles reference a single variable when deciding which SSO provider to use:
+
+```yaml
+# adv_settings.yml (or your inventory)
+traefik_default_sso_middleware: "authelia@docker"
+# or
+traefik_default_sso_middleware: "authentik@docker"
+```
+
+Changing this variable and re-running the affected role playbooks will switch every protected service to the new provider simultaneously.
+
+<Note>
+  The `authelia.master: yes` flag in `settings.yml` is used in multi-node Saltbox deployments (mediabox + feederbox). Set it to `yes` only on the node where Authelia is actually running; feederbox nodes should set `master: no` so they forward authentication to the primary node.
+</Note>

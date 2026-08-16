@@ -1,0 +1,170 @@
+---
+title: "Configure settings.yml: Shell, Rclone, and Remotes"
+sidebarTitle: "Settings"
+description: "Configure Saltbox core settings including your preferred shell, download paths, Rclone remote definitions, transcoding path, and Authelia master settings."
+---
+
+`settings.yml` controls Saltbox's core operational behavior: the shell environment for your user, filesystem paths for downloads and transcodes, whether Rclone cloud mounts are active, and how Authelia SSO is coordinated across nodes. Most users only need to adjust the Rclone remote definitions and paths — the remaining defaults work well for a standard single-server deployment.
+
+## Full Default File
+
+```yaml
+---
+authelia:
+  master: yes
+  subdomain: login
+downloads: /mnt/unionfs/downloads
+rclone:
+  enabled: yes
+  remotes:
+    - remote: google
+      settings:
+        enable_refresh: yes
+        mount: yes
+        template: google
+        union: yes
+        upload: yes
+        upload_from: /mnt/local/Media
+        vfs_cache:
+          enabled: no
+          max_age: 504h
+          size: 50G
+  version: latest
+shell: bash
+transcodes: /mnt/local/transcodes
+```
+
+## Shell
+
+<ParamField path="shell" type="string" default="bash">
+  The login shell to configure for the Saltbox user. Accepted values are `bash` and `zsh`. If you choose `zsh`, Saltbox will install and configure it automatically. This setting affects the shell environment for interactive logins and any shell-based scripts.
+</ParamField>
+
+## Paths
+
+<ParamField path="downloads" type="string" default="/mnt/unionfs/downloads">
+  The root path where download clients (SABnzbd, NZBGet, qBittorrent, Deluge, etc.) will store downloaded files. Saltbox creates two subdirectories beneath this path: `nzbs/` for Usenet downloads and `torrents/` for torrent downloads. The default `/mnt/unionfs/downloads` places downloads on the UnionFS merged filesystem so that both local and cloud storage are available.
+</ParamField>
+
+<ParamField path="transcodes" type="string" default="/mnt/local/transcodes">
+  The path where Plex and Emby will write their transcode buffers. This should be on fast local storage — ideally an NVMe drive or a RAM-backed tmpfs — since transcoding involves continuous sequential writes. Avoid placing this on a network or cloud-backed mount.
+</ParamField>
+
+## Authelia
+
+Authelia provides single sign-on (SSO) and two-factor authentication for all Saltbox services routed through Traefik. In a multi-server setup, only one node should be the Authelia master.
+
+<ParamField path="authelia.master" type="boolean" default="yes">
+  Set to `yes` if this server is (or will be) the primary Authelia instance. In single-server setups, this should always be `yes`. In multi-server setups, only one node should have this set to `yes`; satellite nodes set it to `no` and point to the master node's Authelia instance.
+</ParamField>
+
+<ParamField path="authelia.subdomain" type="string" default="login">
+  The subdomain under your domain that Authelia's login portal will be served at. With the default value of `login` and a domain of `example.com`, the Authelia UI will be accessible at `https://login.example.com`. Change this if you prefer a different subdomain (e.g. `auth` or `sso`).
+</ParamField>
+
+## Rclone
+
+Rclone connects Saltbox to cloud storage providers and powers the remote mounts that media libraries are served from. The `rclone` section defines whether cloud mounts are enabled, which version of Rclone to use, and the full configuration for each cloud remote.
+
+<ParamField path="rclone.enabled" type="boolean" default="yes">
+  Master switch for Rclone integration. Set to `yes` to enable cloud storage mounts and uploads. Set to `no` to run Saltbox in a fully local mode, where all media is stored on-disk without any cloud backend.
+</ParamField>
+
+<ParamField path="rclone.version" type="string" default="latest">
+  The version of Rclone to install. Use `latest` to always install the most recent stable release, or pin to a specific version string such as `1.66.0` for reproducibility.
+</ParamField>
+
+### Rclone Remotes
+
+The `rclone.remotes` key accepts a list of remote definitions. Each entry configures a single cloud remote and controls how it is mounted, uploaded to, and included in the UnionFS overlay.
+
+<Note>
+  You must have already configured the corresponding remote in Rclone (via `rclone config`) before Saltbox can mount it. The `remote` value here must exactly match the remote name in your Rclone configuration.
+</Note>
+
+<ParamField path="rclone.remotes[].remote" type="string" required>
+  The name of the Rclone remote as defined in your `~/.config/rclone/rclone.conf` file. For example, if you ran `rclone config` and named your Google Drive remote `google`, enter `google` here. This is also used as the mount directory name under `/mnt/remote/`.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.template" type="string" required>
+  The Rclone mount template to use for this remote. Templates pre-configure the optimal Rclone flags for a given provider. The primary supported value is `google` for Google Drive. The template determines mount options such as buffer sizes, poll intervals, and directory cache settings.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.mount" type="boolean" default="yes">
+  Whether to mount this remote as a FUSE filesystem. When `yes`, the remote will be mounted at `/mnt/remote/<remote_name>` and made available to the UnionFS overlay and directly to containers. Set to `no` if you only want uploads without a live mount.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.upload" type="boolean" default="yes">
+  Whether to enable automatic uploading from local storage to this remote. When `yes`, Saltbox (via Cloudplow/Autoscan) will periodically move media from `upload_from` to the cloud remote, keeping local disk usage low. Set to `no` for read-only remotes or if you manage uploads manually.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.upload_from" type="string" default="/mnt/local/Media">
+  The local directory that the uploader monitors and moves files from when uploading to this remote. Files placed here by download clients are picked up and transferred to cloud storage on a schedule.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.union" type="boolean" default="yes">
+  Whether to include this remote in the UnionFS union mount at `/mnt/unionfs`. When `yes`, the remote's contents appear merged alongside local storage, so media managers and players see a unified filesystem containing both local and cloud files. Set to `no` to keep the remote isolated from the union.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.enable_refresh" type="boolean" default="yes">
+  Whether to enable periodic Rclone VFS directory cache refreshes for this remote. Refreshing the cache ensures that newly uploaded files become visible through the FUSE mount without requiring a full remount. Recommended to leave as `yes` for active media libraries.
+</ParamField>
+
+### VFS Cache
+
+The VFS cache buffers file data locally before it is streamed from the cloud. Enabling it can smooth out playback at the cost of local disk space. For most users with reliable upstream connections, the VFS cache is not required.
+
+<ParamField path="rclone.remotes[].settings.vfs_cache.enabled" type="boolean" default="no">
+  Whether to enable the Rclone VFS cache for this remote. When `yes`, Rclone caches file data locally according to the `max_age` and `size` limits below. Useful if you experience buffering during media playback, but requires additional local disk space.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.vfs_cache.max_age" type="string" default="504h">
+  The maximum age of cached VFS data before it is evicted. Accepts Rclone duration strings such as `504h` (21 days), `72h` (3 days), or `1h`. Older cached chunks are removed automatically to stay within the `size` limit.
+</ParamField>
+
+<ParamField path="rclone.remotes[].settings.vfs_cache.size" type="string" default="50G">
+  The maximum total size of the VFS cache on disk. Accepts human-readable values like `50G`, `100G`, or `200G`. When this limit is reached, the oldest cached data is evicted first. Set this to no more than ~50% of your available local disk space.
+</ParamField>
+
+## Multiple Remotes Example
+
+You can define multiple remotes if you have more than one cloud storage backend:
+
+```yaml
+rclone:
+  enabled: yes
+  version: latest
+  remotes:
+    - remote: google
+      settings:
+        template: google
+        mount: yes
+        upload: yes
+        upload_from: /mnt/local/Media
+        union: yes
+        enable_refresh: yes
+        vfs_cache:
+          enabled: no
+          max_age: 504h
+          size: 50G
+    - remote: dropbox
+      settings:
+        template: google
+        mount: yes
+        upload: no
+        upload_from: /mnt/local/Media
+        union: no
+        enable_refresh: yes
+        vfs_cache:
+          enabled: no
+          max_age: 504h
+          size: 50G
+```
+
+## Editing settings.yml
+
+```bash
+nano /srv/git/saltbox/settings.yml
+```
+
+After saving your changes, re-run the relevant Saltbox setup tags to apply them. Changes to `rclone` remotes require running the `rclone` and `mounts` tags; changes to `authelia` settings require re-running the `authelia` tag.

@@ -1,0 +1,108 @@
+---
+title: "Docker Installation and Container Management in Saltbox"
+sidebarTitle: "Docker"
+description: "How Saltbox installs and manages Docker: the Docker role, saltbox_managed_docker_controller, container networking, and filesystem requirements."
+---
+
+Saltbox manages Docker entirely through its Ansible `docker` role — you should never install Docker manually via `apt` or any other method before running Saltbox. The role handles installation, daemon configuration, network setup, and the lifecycle of all containers in a consistent, reproducible way. This page explains every piece of that system.
+
+## Installing and Upgrading Docker
+
+Run the Docker role at any time to install Docker from scratch or upgrade an existing installation:
+
+```bash
+ansible-playbook saltbox.yml --tags docker
+```
+
+The role inspects `/usr/bin/docker` to determine whether Docker is already present, reads the filesystem type of `/var/lib/` to apply the correct storage driver, and then writes `/etc/docker/daemon.json` before starting the `docker` and `docker.socket` systemd units. The daemon is configured with `json-file` log driver (max size 10 MB, max 3 files) and `userland-proxy: false` by default.
+
+### Filesystem Considerations
+
+<CardGroup cols={2}>
+  <Card title="ext4 (recommended)" icon="hard-drive">
+    The default and recommended filesystem. Saltbox selects the `overlay2` storage driver automatically, which works best on ext4.
+  </Card>
+  <Card title="BTRFS" icon="triangle-exclamation">
+    If `/var/lib/` resides on a BTRFS volume, Saltbox detects this and runs additional BTRFS cleanup and pseudo-filesystem setup tasks before starting Docker. Performance is generally worse than ext4.
+  </Card>
+</CardGroup>
+
+To run only the filesystem-related portion of the Docker role (useful after resizing a volume), use the `docker-filesystem-resize` tag. That tag runs housekeeping tasks that also carry the `docker-housekeeping` tag independently.
+
+## The saltbox_managed_docker_controller
+
+Saltbox installs a companion FastAPI service called `saltbox_managed_docker_controller` (binary: `sdc`) that runs at `http://127.0.0.1:3377`. This service acts as a dependency-aware container start/stop orchestrator:
+
+- Containers declare dependencies via the `com.github.saltbox.depends_on` Docker label.
+- When mounts change or Docker is restarted, the controller stops managed containers in the correct order and brings them back up respecting the dependency graph.
+- A helper service (`saltbox_managed_docker_controller_helper`) monitors Docker and triggers restarts when needed.
+
+The Docker role itself coordinates with the controller before stopping Docker or changing the network configuration by calling `POST /block/20` to pause the controller for 20 minutes, then waits for the controller to be healthy again via `GET /ping` (up to 120 retries, 1 second apart).
+
+<Note>
+The controller listens exclusively on `127.0.0.1:3377`. The URL is stored in the global variable `docker_controller_url` and is not user-configurable.
+</Note>
+
+## Docker Networking
+
+All Saltbox containers join a shared Docker bridge network named **`saltbox`**:
+
+```yaml
+# From inventories/group_vars/all.yml
+docker_networks_name_common: saltbox
+docker_networks_common:
+  - name: "saltbox"
+    aliases: ["<container-name>"]
+```
+
+The network is created with subnet `172.19.0.0/16`. IPv6 support (`fd00:dead:beef::/48`) is enabled when `dns.ipv6: yes` is set in `adv_settings.yml`.
+
+Because every container shares this network, containers can reach each other by their Docker hostname (which matches their service name). Traefik, for example, uses the alias `host.docker.internal → 172.19.0.1` to route requests back to the host when needed.
+
+## Container Data Paths
+
+Saltbox follows a strict convention for persistent container data:
+
+| Path | Purpose |
+|------|---------|
+| `/opt/<service-name>/` | All configuration, state, and database files for a container |
+| `/mnt/unionfs/` | Shared read-only media filesystem (see [Rclone Mounts](/infrastructure/rclone-mounts)) |
+| `/mnt/local/` | Local writable media storage |
+
+The `server_appdata_path` variable resolves to `/opt` (derived from `server_root_path: "/"`). Every role creates its subfolder under `/opt/<name>/` before starting the container.
+
+## DockerHub Rate Limiting
+
+Unauthenticated pulls from DockerHub are rate-limited to 100 pulls per 6 hours for anonymous users (10 pulls per hour for free accounts). Saltbox can log in to DockerHub automatically during the Docker role run to avoid these limits.
+
+Add your credentials to `accounts.yml`:
+
+```yaml
+# /srv/git/saltbox/accounts.yml
+dockerhub:
+  user: your_dockerhub_username
+  token: your_dockerhub_access_token  # Use an Access Token, not your password
+```
+
+When both `dockerhub.user` and `dockerhub.token` are non-empty, Saltbox sets `dockerhub_is_enabled: true` and the Docker role runs the `subtasks/dockerhub.yml` task, which calls `docker login` for both the `root` user and the configured Saltbox user account.
+
+<Tip>
+Generate a DockerHub Access Token at [hub.docker.com → Account Settings → Security](https://hub.docker.com/settings/security). Use a token rather than your password — tokens can be revoked individually.
+</Tip>
+
+## Saltbox vs. Docker Compose
+
+Saltbox does not use `docker-compose` files. Instead, every service is defined as an Ansible role that calls the community Docker modules (`community.docker.docker_container`). This approach means:
+
+- Container definitions live alongside their install logic in one Ansible role.
+- Dependencies, health checks, and networking are handled by the controller and Ansible variables rather than a compose file.
+- Upgrading a container is done by re-running its tag: `ansible-playbook saltbox.yml --tags <service>`.
+
+## Common Tags
+
+| Tag | Effect |
+|-----|--------|
+| `docker` | Full Docker install / upgrade |
+| `docker-housekeeping` | Prune unused images, containers, and volumes |
+| `dockerhub` | Re-authenticate to DockerHub |
+| `ctop` | Install the `ctop` container monitoring tool |

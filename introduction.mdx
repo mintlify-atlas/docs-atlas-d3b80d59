@@ -1,0 +1,97 @@
+---
+title: "Saltbox: Ansible-powered Docker Cloud Media Server"
+sidebarTitle: "Introduction"
+description: "Saltbox uses Ansible to deploy a Docker-containerized cloud media server on Ubuntu 22.04/24.04 with Traefik, Rclone, and over 100 available apps."
+---
+
+Saltbox is an Ansible-based solution for rapidly deploying a Docker-containerized cloud media server on Ubuntu Server. It automates everything from OS hardening and Docker setup to Traefik reverse proxy configuration and individual application deployment — turning a fresh Ubuntu install into a fully functioning media automation stack in a single playbook run. Saltbox is heavily based on its predecessor, [Cloudbox](https://github.com/Cloudbox/Cloudbox), and carries forward that project's philosophy of a code-driven, reproducible media server built entirely from the command line.
+
+## What Problem Does Saltbox Solve?
+
+Setting up a self-hosted media server typically involves installing Docker, configuring a reverse proxy with TLS certificates, wiring up dozens of containers to talk to each other, and repeating that process every time you provision a new server. Saltbox eliminates that toil. Its primary functions are: the automatic acquisition of media, the ability to play it back from anywhere and from any device, and optionally storing that media on cloud storage. A single `ansible-playbook` command provisions the entire stack — or any individual application — in an idempotent, repeatable way.
+
+## Deployment Models
+
+Saltbox supports three first-class installation profiles, each implemented as a top-level Ansible tag. Choose the one that best matches your setup.
+
+<CardGroup cols={2}>
+  <Card title="saltbox" icon="server">
+    The all-in-one profile. Installs the full core stack plus both media-server and download/indexing roles on a single machine. Best for homelab setups where one box handles everything.
+  </Card>
+  <Card title="mediabox" icon="film">
+    Media-server only. Installs Plex (or Emby/Jellyfin), Tautulli, Overseerr, and related playback services. Use this on a dedicated streaming box that consumes content managed by a separate feederbox.
+  </Card>
+  <Card title="feederbox" icon="arrow-down-to-line">
+    Download and indexing only. Installs Sonarr, Radarr, SABnzbd, qBittorrent, Prowlarr, and other acquisition tools. Pairs with a mediabox over a local network or a VPN.
+  </Card>
+  <Card title="preinstall" icon="wrench">
+    Prepares the OS without installing any apps. Runs kernel tweaks, creates the service user, installs Rclone, Docker, and Traefik. Run this first when you want to customize before a full install.
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+Every Saltbox deployment follows the same layered architecture:
+
+1. **Ansible roles** read your `accounts.yml`, `settings.yml`, and `adv_settings.yml` configuration files and apply tasks idempotently against `localhost`.
+2. **Docker containers** are launched by those roles. All application data (appdata) is stored under `/opt/<appname>` on the host, and media lives under `/mnt/`.
+3. **Traefik** acts as the reverse proxy. It automatically obtains and renews TLS certificates (via Cloudflare DNS challenge or HTTP validation) and routes `https://<app>.<your-domain>` to the correct container.
+4. **Rclone** mounts cloud storage (Google Drive or any other supported remote) under `/mnt/remote` and presents a merged filesystem via UnionFS at `/mnt/unionfs`, so applications see local and cloud media as a single directory tree.
+5. **Cloudplow** (optional) watches `/mnt/local/Media` and uploads new files to your cloud remote automatically, keeping local disk usage low.
+
+```
+Your Domain (e.g. yourdomain.com)
+        │
+        ▼
+  Traefik (ports 80/443)
+  ├── plex.yourdomain.com  → Plex container
+  ├── sonarr.yourdomain.com → Sonarr container
+  ├── radarr.yourdomain.com → Radarr container
+  └── ...
+        │
+  Docker network (saltbox)
+        │
+  /mnt/unionfs  (local + rclone remote via UnionFS)
+```
+
+## What Saltbox Is NOT
+
+<Note>
+  Saltbox does not have a dashboard or GUI of its own. All Saltbox-specific setup and configuration is done in text editors and on the command line. If you are looking for a point-and-click media server manager, Saltbox is not the right tool.
+</Note>
+
+There is no web UI for managing Saltbox itself. You edit YAML files directly, run `ansible-playbook` commands to install or update roles, and interact with the individual applications (Sonarr, Radarr, Plex, etc.) through their own web UIs — each available at its own subdomain once deployed.
+
+## Supported Platforms
+
+<Warning>
+  Saltbox is designed exclusively for **x64 machines running Ubuntu Server 22.04 LTS or 24.04 LTS**. The following configurations are explicitly **not supported**:
+
+  - Ubuntu Desktop (any version)
+  - Non-LTS Ubuntu releases (e.g. 23.10, 25.04)
+  - Any Linux distribution other than Ubuntu
+  - ARM processors (including Raspberry Pi and Apple Silicon)
+</Warning>
+
+## Featured Applications
+
+Saltbox ships roles for a large catalogue of self-hosted applications. The following are available as individual Ansible tags out of the box:
+
+| Category | Applications |
+|---|---|
+| **Media Servers** | Plex, Emby, Jellyfin |
+| **Media Management** | Sonarr, Radarr, Lidarr, Bazarr, Whisparr |
+| **Download Clients** | SABnzbd, NZBGet, qBittorrent, Deluge |
+| **Indexers & Search** | Prowlarr, NZBHydra2, Jackett |
+| **Request Management** | Overseerr, Petio |
+| **Monitoring & Stats** | Tautulli, Netdata, Grafana, Prometheus, Glances, Dozzle, cAdvisor |
+| **Authentication** | Authelia, Authentik |
+| **Cloud & Uploads** | Cloudplow, Rclone, Autoscan |
+| **Utilities** | Organizr, Portainer, Autobrr, Unpackerr, Autoheal, DDClient |
+| **Databases** | MariaDB, PostgreSQL, MongoDB, Redis |
+
+Additional community roles are available through the [Sandbox](https://github.com/saltyorg/sandbox) project, which extends Saltbox with a large library of supplementary apps installable via the same `ansible-playbook --tags` interface.
+
+## Relationship to Cloudbox
+
+Saltbox is the actively maintained spiritual successor to [Cloudbox](https://github.com/Cloudbox/Cloudbox). It preserves the same core design principles — Ansible-driven, Docker-based, Traefik-fronted, cloud-storage-aware — while modernising the codebase, adding support for Ubuntu 22.04/24.04, expanding the application catalogue, and adopting an ongoing release cadence. If you are migrating from Cloudbox, the concepts, directory structure, and workflow will feel immediately familiar.

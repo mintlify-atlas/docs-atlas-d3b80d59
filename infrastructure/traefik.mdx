@@ -1,0 +1,275 @@
+---
+title: "Traefik Reverse Proxy and TLS Configuration in Saltbox"
+sidebarTitle: "Traefik"
+description: "Saltbox uses Traefik as its reverse proxy with automatic TLS via DNS-01 ACME. Configure entrypoints, HSTS, HTTP/3, CrowdSec, and custom middleware."
+---
+
+Every Saltbox service that exposes a web UI is routed through Traefik, which handles TLS termination, HTTP→HTTPS redirection, middleware chains, and optional authentication. Traefik runs as a Docker container on the `saltbox` network and reads routing rules directly from Docker labels on sibling containers, so adding a new service automatically makes it accessible via HTTPS at its configured subdomain — no manual Traefik configuration required.
+
+## How Traefik Gets Installed
+
+```bash
+ansible-playbook saltbox.yml --tags traefik
+```
+
+The Traefik role deploys `traefik:v3.7` as a Docker container, writes its ACME storage file to `/opt/traefik/acme.json`, and configures all settings via Docker command-line flags. Traefik's configuration is re-generated every time you re-run the tag.
+
+To wipe existing certificates and start fresh (useful when switching certificate providers or fixing a broken ACME state):
+
+```bash
+ansible-playbook saltbox.yml --tags traefik-reset-certs
+```
+
+## TLS Certificate Providers
+
+Traefik is configured with multiple ACME certificate resolvers. The active resolver is selected through `adv_settings.yml`.
+
+<CardGroup cols={2}>
+  <Card title="Let's Encrypt (default)" icon="lock">
+    Uses the `cfdns` cert resolver. No extra configuration needed beyond a working DNS provider.
+  </Card>
+  <Card title="ZeroSSL" icon="shield-check">
+    Enable with `traefik.cert.zerossl: yes` in `adv_settings.yml`. Requires a ZeroSSL EAB key and HMAC value.
+  </Card>
+</CardGroup>
+
+The active certresolver is determined by the following logic from `inventories/group_vars/all.yml`:
+
+```yaml
+traefik_default_certprovider: "{{ 'cfdns' if (not zerossl_is_enabled) else 'zerossl' }}"
+traefik_default_certresolver: "{{ traefik_default_certprovider
+                                  if (not (traefik_http | bool))
+                                  else (traefik_default_resolver if not zerossl_is_enabled
+                                        else traefik_default_zerossl_resolver) }}"
+```
+
+## Certificate Validation Methods
+
+### DNS-01 Challenge (default)
+
+DNS-01 is the default challenge method. It does **not** require ports 80 or 443 to be directly reachable from the internet, making it suitable for servers behind NAT or firewalls. Traefik creates a temporary TXT record in your DNS zone to prove domain ownership.
+
+Configure the DNS provider in `adv_settings.yml`:
+
+```yaml
+traefik:
+  provider: cloudflare   # or: cloudns, duckdns, dynu, godaddy, hetzner,
+                         #     linode, namecheap, namedotcom, netcup, porkbun, powerdns
+```
+
+Traefik uses these resolvers for DNS propagation checks:
+
+```yaml
+traefik_dns_resolvers: "1.1.1.1:53,1.0.0.1:53"
+```
+
+### HTTP-01 Challenge
+
+<Warning>
+HTTP-01 validation requires that your server's port 80 be directly accessible from the public internet. If your server is behind a load balancer, NAT, or a firewall that does not forward port 80, certificate issuance will fail. Do not enable this if you rely on Cloudflare proxy ("orange cloud") in front of your domain.
+</Warning>
+
+Enable HTTP-01 validation in `adv_settings.yml`:
+
+```yaml
+traefik:
+  cert:
+    http_validation: yes
+```
+
+When `http_validation` is enabled, Traefik adds an `httpresolver` ACME resolver that uses the `web` entrypoint (port 80) to complete challenges. DNS-01 resolvers remain configured alongside it.
+
+## Entrypoints
+
+Traefik listens on two main entrypoints:
+
+| Entrypoint | Port | Purpose |
+|------------|------|---------|
+| `web` | `80` | HTTP; all traffic is redirected to HTTPS via the `redirect-to-https@docker` middleware |
+| `websecure` | `443` | HTTPS with TLS; the default entrypoint for all services |
+| `internal` | `8080` | Internal Docker network only; routes to the Traefik API/dashboard |
+
+Both `web` and `websecure` share the same timeout settings:
+
+```yaml
+traefik_entrypoint_web_readtimeout: "600"      # seconds
+traefik_entrypoint_web_writetimeout: "0"        # disabled
+traefik_entrypoint_web_idletimeout: "180"       # seconds
+traefik_entrypoint_web_request_maxheaderbytes: "1048576"   # 1 MiB
+
+traefik_entrypoint_websecure_readtimeout: "600"
+traefik_entrypoint_websecure_writetimeout: "0"
+traefik_entrypoint_websecure_idletimeout: "180"
+traefik_entrypoint_websecure_request_maxheaderbytes: "1048576"
+```
+
+### Custom Entrypoints
+
+You can define additional entrypoints via the `traefik_entrypoint_custom` variable. Add it to a `host_vars` file or a custom variable file:
+
+```yaml
+traefik_entrypoint_custom:
+  my-tcp-port:
+    address: ""          # empty string = bind on all interfaces
+    port: "8443"
+    tls: true
+    type: tcp
+  my-udp-port:
+    address: "192.168.1.10"
+    port: "9000"
+    tls: false
+    type: udp
+  my-dual-port:
+    address: ""
+    port: "7000"
+    tls: false
+    type: both           # opens both TCP and UDP
+```
+
+Valid `type` values are `tcp`, `udp`, or `both`.
+
+## Path Sanitization and Encoded Characters
+
+Traefik's path sanitization is enabled by default and applies to all entrypoints:
+
+```yaml
+traefik_sanitize_path: true
+```
+
+The following encoded character classes are also permitted through by default (all `true`):
+
+- `allowEncodedSlash`
+- `allowEncodedBackSlash`
+- `allowEncodedNullCharacter`
+- `allowEncodedSemicolon`
+- `allowEncodedPercent`
+- `allowEncodedQuestionMark`
+- `allowEncodedHash`
+
+## HTTP/3 (QUIC)
+
+HTTP/3 is disabled by default because some applications have compatibility issues with QUIC:
+
+```yaml
+traefik_http3: false   # default
+```
+
+To enable it, set `traefik_http3: true` in your variable overrides. When enabled, Traefik adds `--entrypoints.websecure.http3.advertisedport=443` and opens the `websecure` UDP port.
+
+## HSTS
+
+HSTS headers are **disabled** by default. Enable them in `adv_settings.yml`:
+
+```yaml
+traefik:
+  hsts: yes
+```
+
+When enabled, the `hsts@file` middleware is appended to the default middleware chain for all HTTPS routes.
+
+## x-robots-tag Header
+
+All responses include an `x-robots-tag` header injected by the `robotHeaders@file` middleware:
+
+```
+x-robots-tag: none,noarchive,nosnippet,notranslate,noimageindex
+```
+
+This header instructs web crawlers not to index, archive, or display snippets for any Saltbox service. To disable it on a per-role basis, set `<role>_traefik_robot_enabled: false`.
+
+## Traefik Dashboard
+
+The Traefik dashboard is exposed at `dash.<your-domain>` (configurable):
+
+```yaml
+# adv_settings.yml
+traefik:
+  subdomains:
+    dash: dash      # resolves to dash.yourdomain.com
+    metrics: metrics
+```
+
+Access is protected by HTTP Basic Auth using the credentials from the Traefik `auth` file at `/opt/traefik/auth`.
+
+## Prometheus Metrics
+
+Prometheus metrics are disabled by default. Enable them in `adv_settings.yml`:
+
+```yaml
+traefik:
+  metrics: yes
+```
+
+When enabled, metrics are exposed at `metrics.<your-domain>/prometheus` and protected by the same Basic Auth as the dashboard. Traefik adds per-entrypoint, per-router, and per-service labels to all metrics.
+
+## CrowdSec Integration
+
+Saltbox includes built-in CrowdSec bouncer support via the `crowdsec-bouncer-traefik-plugin`. When CrowdSec is enabled, Traefik loads the plugin at startup:
+
+```yaml
+# Plugin module loaded in Docker commands
+--experimental.plugins.bouncer.modulename=github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+--experimental.plugins.bouncer.version=v1.7.1
+```
+
+The ban page served to blocked IPs is configured at:
+
+```yaml
+# Path is internal to the Traefik container
+traefik_crowdsec_ban_filepath: "/etc/traefik/ban.html"
+# Host path equivalent: /opt/traefik/ban.html
+```
+
+## CloudflareWarp Plugin
+
+The `cloudflarewarp` plugin is enabled by default when Cloudflare is configured. It correctly restores the real client IP from Cloudflare's forwarded headers:
+
+```yaml
+traefik_plugin_cloudflarewarp_enabled: true
+```
+
+The plugin is only loaded when `cloudflare_is_enabled` is also true.
+
+## Tailscale Support
+
+For servers behind Tailscale, Traefik can bind to the Tailscale interface in addition to the public interface:
+
+```yaml
+traefik_tailscale_enabled: false   # default
+```
+
+When enabled, Traefik adds `tailscale-web` (port 81) and `tailscale-websecure` (port 444) entrypoints bound to the Tailscale IPv4 (and optionally IPv6) address. Override the bind IPs with:
+
+```yaml
+traefik_tailscale_bind_ip: "100.x.x.x"      # optional
+traefik_tailscale_bind_ipv6: "fd7a::x:x"    # optional
+```
+
+## Logging
+
+Traefik writes structured logs to `/opt/traefik/traefik.log` and access logs to `/opt/traefik/access.log`:
+
+| Setting | Value |
+|---------|-------|
+| Log level | `ERROR` |
+| Max log size | `10` MB |
+| Max backups | `3` |
+| Max age | `3` days |
+| Compression | enabled |
+| Access log buffer | `100` lines |
+
+## Reference: adv_settings.yml Traefik Block
+
+```yaml
+traefik:
+  cert:
+    http_validation: no   # use HTTP-01 instead of DNS-01
+    zerossl: no           # use ZeroSSL instead of Let's Encrypt
+  error_pages: no         # enable custom error pages
+  hsts: no                # enable HSTS headers
+  metrics: no             # enable Prometheus metrics endpoint
+  provider: cloudflare    # DNS provider for DNS-01 challenge
+  subdomains:
+    dash: dash            # subdomain for Traefik dashboard
+    metrics: metrics      # subdomain for Prometheus metrics
+```

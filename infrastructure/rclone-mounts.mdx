@@ -1,0 +1,197 @@
+---
+title: "Cloud Storage Mounts with Rclone and UnionFS in Saltbox"
+sidebarTitle: "Rclone Mounts"
+description: "Saltbox mounts cloud storage via Rclone and merges it with local storage using UnionFS, creating a unified media filesystem at /mnt/unionfs."
+---
+
+Saltbox uses Rclone to mount cloud storage remotes as local filesystems and then merges those mounts with local disk storage via UnionFS. The result is a single transparent path, `/mnt/unionfs`, through which all Saltbox services (Sonarr, Radarr, Plex, etc.) read and write media without needing to know whether a file is local or in the cloud. This page explains the full architecture and how to configure it.
+
+## Architecture Overview
+
+```
+/mnt/local/Media          ← Local disk (new downloads land here first)
+/mnt/remote/<name>        ← Cloud remote mounted by Rclone (read from cloud)
+          ↓                            ↓
+          └──────── UnionFS ───────────┘
+                       ↓
+               /mnt/unionfs          ← What Saltbox apps see
+```
+
+When an application reads a file, UnionFS checks local storage first, then falls back to the remote mount. Writes always go to `/mnt/local`. A background upload agent (Cloudplow) periodically moves accumulated media from `/mnt/local/Media` to the cloud remote, keeping local disk usage under control.
+
+## Prerequisites
+
+<Note>
+Rclone must be configured before Saltbox can create remote mounts. Run `rclone config` as the Saltbox user after the `preinstall` tag completes to create your remote(s). The remote name you configure in `rclone config` must exactly match the `remote:` value in `settings.yml`.
+</Note>
+
+Rclone itself is installed by the `rclone` role, which is automatically included when you run `--tags mounts`. The version to install is controlled by:
+
+```yaml
+# settings.yml
+rclone:
+  version: latest    # or pin a specific version, e.g. "1.67.0"
+```
+
+Using `latest` fetches the most recent stable release from the GitHub API. Pin a version if you need reproducible builds or have encountered a regression in a newer release.
+
+## Configuring Remotes in settings.yml
+
+Each cloud remote is declared in the `rclone.remotes` list in `settings.yml`. Saltbox ships with a default Google Drive remote as an example:
+
+```yaml
+rclone:
+  enabled: yes
+  version: latest
+  remotes:
+    - remote: google           # must match the name in rclone config
+      settings:
+        enable_refresh: yes    # keep directory listing cache fresh
+        mount: yes             # create a systemd mount for this remote
+        template: google       # mount template to use (from mount-templates repo)
+        union: yes             # include in the UnionFS overlay
+        upload: yes            # allow Cloudplow to upload from this remote
+        upload_from: /mnt/local/Media   # path Cloudplow monitors for new files
+        vfs_cache:
+          enabled: no          # enable VFS file caching
+          max_age: 504h        # evict cached files older than this (21 days)
+          size: 50G            # maximum cache size on disk
+```
+
+<ParamField path="remote" type="string" required>
+  The name of the remote as configured in `rclone config`. This becomes the mount point name under `/mnt/remote/`.
+</ParamField>
+
+<ParamField path="settings.mount" type="boolean" default="yes">
+  Whether to create a systemd-managed mount at `/mnt/remote/<remote>` for this remote. Set to `no` to define a remote without mounting it.
+</ParamField>
+
+<ParamField path="settings.template" type="string" required>
+  The mount template from the [mount-templates](https://github.com/saltyorg/mount-templates) repository to use. Common values: `google`, `dropbox`, `s3`, `nfs`. The template controls the Rclone flags passed to the mount.
+</ParamField>
+
+<ParamField path="settings.union" type="boolean" default="yes">
+  Whether this remote is included in the UnionFS overlay at `/mnt/unionfs`. If `no`, the mount exists at `/mnt/remote/<name>` but is not visible through `/mnt/unionfs`.
+</ParamField>
+
+<ParamField path="settings.upload" type="boolean" default="yes">
+  Whether Cloudplow should upload new media from `upload_from` to this remote.
+</ParamField>
+
+<ParamField path="settings.upload_from" type="string" default="/mnt/local/Media">
+  The local path Cloudplow monitors for new files to upload. Only relevant when `upload: yes`.
+</ParamField>
+
+<ParamField path="settings.enable_refresh" type="boolean" default="yes">
+  When `yes`, Saltbox configures a periodic systemd timer to call `rclone rc vfs/refresh` on the mount, keeping the cached directory listing in sync with the remote.
+</ParamField>
+
+<ParamField path="settings.vfs_cache.enabled" type="boolean" default="no">
+  Enable Rclone's VFS cache mode. When disabled, Rclone uses no local cache and streams files directly from the remote.
+</ParamField>
+
+<ParamField path="settings.vfs_cache.max_age" type="string" default="504h">
+  Maximum age of files in the VFS cache before they are evicted. Accepts Go duration strings (e.g. `72h`, `504h`).
+</ParamField>
+
+<ParamField path="settings.vfs_cache.size" type="string" default="50G">
+  Maximum total disk space the VFS cache may use. Accepts size strings (e.g. `50G`, `100G`).
+</ParamField>
+
+### When to Enable VFS Cache
+
+<Note>
+VFS cache is disabled by default because most media files are read sequentially and do not benefit from caching. Enable it if you experience buffering or seek problems with large video files, or if a service needs to write partial files (e.g. some torrent clients that write to a cloud path directly).
+</Note>
+
+Enabling VFS cache causes Rclone to download and buffer file chunks locally before serving them, which improves random-seek performance but consumes local disk space and increases cache miss latency on first access.
+
+## How Mounts Are Created
+
+When you run `--tags mounts`, the `remote` role performs these steps:
+
+1. Optionally updates Rclone to the version specified in `settings.yml`.
+2. Stops all running Docker containers and Docker itself (to safely modify mount points).
+3. Cleans up any legacy `rclone_vfs.service` and `rclone_refresh.service` units from older Saltbox versions.
+4. Creates the `/mnt/remote` directory.
+5. For each remote in `rclone.remotes` with `mount: yes` and a non-NFS template, includes `remote.yml` tasks to configure the systemd mount unit.
+6. NFS remotes use a separate `nfs.yml` task path.
+
+Mount units are managed as `saltbox_managed_*` systemd services, which the Docker controller understands and coordinates with during Docker restarts.
+
+## Mount Templates
+
+The `mount_templates` role clones the [`saltyorg/mount-templates`](https://github.com/saltyorg/mount-templates) repository to `/opt/mount-templates/`. This repository contains Jinja2 systemd service templates for each supported remote type (Google Drive, Dropbox, S3-compatible, NFS, etc.). Each template defines the exact `rclone mount` command and flags appropriate for that backend.
+
+<Tip>
+To customize mount flags beyond what a template provides (for example, to add `--drive-chunk-size` or `--buffer-size`), you can edit the cloned template file in `/opt/mount-templates/` and re-run `--tags mounts`. However, note that re-running `mount_templates` will overwrite your edits by re-cloning the repository.
+</Tip>
+
+## Cloudplow Upload Agent
+
+Cloudplow is the background service that uploads new media from local storage to the cloud. It is automatically installed when `rclone_remote_is_defined` and `use_remote` are both true (i.e., `rclone.enabled: yes` in `settings.yml` and at least one remote is defined).
+
+<Tip>
+Cloudplow watches the `upload_from` path (default `/mnt/local/Media`) for new files. It uploads them to the cloud remote and then removes the local copy once the upload is confirmed. This keeps your local disk from filling up while maintaining the appearance of all media being available via `/mnt/unionfs`.
+</Tip>
+
+Cloudplow is configured through its own config file at `/opt/cloudplow/config.json`, which Saltbox generates automatically from your `settings.yml` values.
+
+## Running and Re-Running Mounts
+
+To apply mount configuration changes — for example after adding a new remote or changing VFS cache settings — re-run the mounts tag:
+
+```bash
+ansible-playbook saltbox.yml --tags mounts
+```
+
+This stops containers, tears down existing mount units, recreates them from the updated settings, and brings containers back up. The Docker controller coordinates the shutdown and restart sequence.
+
+## Multiple Remotes
+
+You can define multiple remotes in the `remotes` list. Each gets its own mount point and systemd service:
+
+```yaml
+rclone:
+  enabled: yes
+  version: latest
+  remotes:
+    - remote: gdrive-movies
+      settings:
+        mount: yes
+        template: google
+        union: yes
+        upload: yes
+        upload_from: /mnt/local/Media/Movies
+        enable_refresh: yes
+        vfs_cache:
+          enabled: no
+          max_age: 504h
+          size: 50G
+    - remote: dropbox-shows
+      settings:
+        mount: yes
+        template: dropbox
+        union: yes
+        upload: yes
+        upload_from: /mnt/local/Media/TV
+        enable_refresh: yes
+        vfs_cache:
+          enabled: no
+          max_age: 504h
+          size: 50G
+```
+
+Both remotes will be merged into `/mnt/unionfs` by UnionFS.
+
+## IPv4-Only Mounts
+
+If your server has connectivity issues with IPv6 and Rclone mount connections are failing, you can force IPv4-only resolution for mounts:
+
+```yaml
+# adv_settings.yml
+mounts:
+  ipv4_only: no   # set to yes to force IPv4 DNS resolution for mounts
+```
+
+This sets the `rclone_mounts_ipv4_only` flag which is passed to the mount template renderer.

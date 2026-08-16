@@ -1,0 +1,260 @@
+---
+title: "Monitoring Stack: Grafana, Prometheus, and Netdata"
+sidebarTitle: "Monitoring"
+description: "Deploy a full observability stack with Saltbox: Grafana dashboards, Prometheus metrics, Netdata real-time monitoring, cAdvisor container stats, and Dozzle log viewer."
+---
+
+Saltbox provides a comprehensive monitoring ecosystem covering every layer of the stack — from raw host metrics and Docker container stats to media-server playback analytics and disk health. Components are designed to complement each other: Prometheus scrapes metrics from Node Exporter and cAdvisor, Grafana visualises them, Netdata gives you a real-time view of the host, Dozzle streams container logs, and Tautulli tracks your Plex activity. None of these are required to run a functional Saltbox, but together they give you complete visibility into what your server is doing.
+
+---
+
+## Metrics & Visualisation
+
+<CardGroup cols={2}>
+  <Card title="Prometheus" icon="chart-line">
+    Pull-based metrics store. Scrapes Node Exporter and cAdvisor on a configurable interval and stores time-series data with configurable retention. Accessible at `prometheus.<domain>`.
+  </Card>
+  <Card title="Grafana" icon="chart-bar">
+    Dashboarding and visualisation platform. Query Prometheus (or any other data source), build dashboards, and set up alerts. Accessible at `grafana.<domain>`.
+  </Card>
+  <Card title="Node Exporter" icon="server">
+    Exports host-level system metrics (CPU, memory, disk I/O, network) to Prometheus. Runs as a container with read-only mounts to host `/proc` and `/sys`.
+  </Card>
+  <Card title="cAdvisor" icon="docker">
+    Container Advisor — exports per-container resource usage metrics (CPU, memory, network, filesystem) to Prometheus. Runs in privileged mode for full access to Docker metrics.
+  </Card>
+</CardGroup>
+
+### Prometheus
+
+```bash
+ansible-playbook saltbox.yml --tags prometheus
+```
+
+Prometheus runs on port `9090` (`prom/prometheus`) and is accessible at `https://prometheus.<your-domain>`. Saltbox protects it with HTTP basic authentication via a Traefik middleware (`prometheus-auth`) backed by the `/etc/traefik/auth` htpasswd file.
+
+Default retention settings:
+
+```yaml
+prometheus_role_retention: "15d"   # keep 15 days of data
+prometheus_role_size: "0"          # no size limit (0 = unlimited)
+```
+
+Override in inventory to increase retention or cap storage:
+
+```yaml
+prometheus_role_retention: "30d"
+prometheus_role_size: "10GB"
+```
+
+Prometheus configuration is stored at `/opt/prometheus/prometheus.yml`. Data is persisted in `/opt/prometheus/data`.
+
+### Grafana
+
+```bash
+ansible-playbook saltbox.yml --tags grafana
+```
+
+Grafana runs on port `3000` (`grafana/grafana`) and is accessible at `https://grafana.<your-domain>`. Saltbox pre-configures the admin credentials from your Saltbox `user.name` and `user.pass`:
+
+```yaml
+grafana_role_docker_envs_default:
+  GF_SECURITY_ADMIN_USER: "{{ user.name }}"
+  GF_SECURITY_ADMIN_PASSWORD: "{{ user.pass }}"
+  GF_SERVER_ROOT_URL: "https://grafana.<your-domain>"
+```
+
+Install Grafana plugins at deploy time by setting `grafana_role_plugins` in inventory:
+
+```yaml
+# Comma-separated list of plugin IDs
+grafana_role_plugins: "grafana-clock-panel,grafana-piechart-panel"
+```
+
+### Node Exporter
+
+```bash
+ansible-playbook saltbox.yml --tags node-exporter
+```
+
+Node Exporter mounts `/proc`, `/sys`, host passwd/group files, and OS release information as read-only volumes so it can report accurate host-level metrics without requiring privileged mode.
+
+### cAdvisor
+
+```bash
+ansible-playbook saltbox.yml --tags cadvisor
+```
+
+cAdvisor runs in privileged mode with read-only mounts to the host root filesystem and Docker socket. It is accessible at `https://cadvisor.<your-domain>` (port `8080` internally) and is protected by `traefik_default_sso_middleware`. Add it as a Prometheus scrape target to get per-container metrics in Grafana.
+
+---
+
+## Real-Time Monitoring
+
+<CardGroup cols={2}>
+  <Card title="Netdata" icon="gauge-high">
+    Per-second granularity metrics for CPU, memory, disk, network, Docker containers, and hundreds of application integrations. Accessible at `netdata.<domain>`.
+  </Card>
+  <Card title="Glances" icon="eye">
+    Python-based system overview combining CPU, memory, disk, network, and Docker stats in a single web page. Accessible at `glances.<domain>`.
+  </Card>
+</CardGroup>
+
+### Netdata
+
+```bash
+ansible-playbook saltbox.yml --tags netdata
+```
+
+Netdata runs on port `19999` (`netdata/netdata`) and is accessible at `https://netdata.<your-domain>`. Saltbox protects it with `traefik_default_sso_middleware` by default.
+
+Netdata uses a Docker Socket Proxy sidecar (`netdata-docker-socket-proxy`) to safely access Docker metrics without mounting the raw Docker socket into the Netdata container. It runs in host PID mode and requires elevated capabilities:
+
+```yaml
+netdata_role_docker_capabilities_default:
+  - SYS_PTRACE
+  - SYS_ADMIN
+netdata_role_docker_pid_mode: "host"
+netdata_role_docker_security_opts_default:
+  - apparmor=unconfined
+```
+
+Optionally connect Netdata to the Netdata Cloud by providing a claim token:
+
+```yaml
+netdata_role_claim_token: "YOUR_CLAIM_TOKEN"
+netdata_role_claim_url: "https://app.netdata.cloud"
+netdata_role_claim_room: "YOUR_ROOM_ID"
+```
+
+### Glances
+
+```bash
+ansible-playbook saltbox.yml --tags glances
+```
+
+Glances is accessible at `https://glances.<your-domain>`.
+
+---
+
+## Container & Log Management
+
+<CardGroup cols={2}>
+  <Card title="Dozzle" icon="terminal">
+    Real-time Docker container log viewer. Stream logs from any container in your browser without SSH. Accessible at `dozzle.<domain>`.
+  </Card>
+  <Card title="Portainer" icon="sliders">
+    Full Docker management GUI — view containers, images, volumes, networks, and stacks. Accessible at `portainer.<domain>`.
+  </Card>
+</CardGroup>
+
+### Dozzle
+
+```bash
+ansible-playbook saltbox.yml --tags dozzle
+```
+
+Dozzle runs on port `8080` (`amir20/dozzle`) and is accessible at `https://dozzle.<your-domain>`. Like Netdata, Dozzle uses a Docker Socket Proxy sidecar (`dozzle-docker-socket-proxy`) so the main container never directly accesses `/var/run/docker.sock`.
+
+When Authelia is the SSO provider, Dozzle is configured to use `DOZZLE_AUTH_PROVIDER: forward-proxy` automatically. When Authentik is the provider, the Authentik user headers are passed through:
+
+```yaml
+DOZZLE_AUTH_HEADER_USER: "X-authentik-username"
+DOZZLE_AUTH_HEADER_EMAIL: "X-authentik-email"
+DOZZLE_AUTH_HEADER_NAME: "X-authentik-name"
+```
+
+Multi-node setups can configure Dozzle agent mode for centrally viewing logs from feederbox containers:
+
+```yaml
+dozzle_role_agent_mode: false          # set true on feederbox
+dozzle_role_additional_hosts: ""       # comma-separated agent host:port list
+```
+
+### Portainer
+
+```bash
+ansible-playbook saltbox.yml --tags portainer
+```
+
+Portainer runs on port `9000` (`portainer/portainer-ce` by default) and is accessible at `https://portainer.<your-domain>`. It mounts `/var/run/docker.sock` directly for full Docker management capabilities. Portainer Business Edition is available by setting:
+
+```yaml
+portainer_role_business_edition: true
+```
+
+Portainer is protected by both `traefik_default_sso_middleware` and its own login, providing two layers of access control.
+
+---
+
+## Media Server Analytics
+
+### Tautulli
+
+Tautulli tracks Plex playback history, user activity, and notification events. It is covered in detail on the [Arr Apps](/applications/arr-apps) page, but it is also an important part of the monitoring picture.
+
+```bash
+ansible-playbook saltbox.yml --tags tautulli
+```
+
+Tautulli is accessible at `https://tautulli.<your-domain>` (port `8181`).
+
+---
+
+## Disk Health & Update Notifications
+
+<CardGroup cols={2}>
+  <Card title="Scrutiny" icon="hard-drive">
+    Web-based S.M.A.R.T. monitoring dashboard with historical data and failure trend analysis for all physical drives.
+  </Card>
+  <Card title="DIUN" icon="bell">
+    Docker Image Update Notifier — sends alerts when a newer image is available for any running container.
+  </Card>
+</CardGroup>
+
+```bash
+# S.M.A.R.T. monitoring
+ansible-playbook saltbox.yml --tags scrutiny
+
+# Docker image update notifications
+ansible-playbook saltbox.yml --tags diun
+```
+
+---
+
+## Terminal Monitoring
+
+### btop
+
+btop is a feature-rich terminal resource monitor installed directly on the host (not as a container). It provides CPU, memory, disk, network, and process monitoring in a single, interactive TUI.
+
+```bash
+ansible-playbook saltbox.yml --tags btop
+```
+
+After installation, run `btop` in any SSH session on your Saltbox host.
+
+---
+
+## Traefik Metrics
+
+Traefik can expose a Prometheus-compatible metrics endpoint. Enable it by setting `traefik.metrics: yes` in `adv_settings.yml`, which activates the `metrics` entrypoint in Traefik. Once enabled, add the Traefik metrics endpoint as a scrape target in `prometheus.yml` to visualise request rates, latencies, and error rates per service in Grafana.
+
+---
+
+## Summary
+
+| Tool | Tag | Port | URL |
+|---|---|---|---|
+| Prometheus | `prometheus` | 9090 | `prometheus.<domain>` |
+| Grafana | `grafana` | 3000 | `grafana.<domain>` |
+| Node Exporter | `node-exporter` | 9100 | — (scrape target) |
+| cAdvisor | `cadvisor` | 8080 | `cadvisor.<domain>` |
+| Netdata | `netdata` | 19999 | `netdata.<domain>` |
+| Glances | `glances` | 61208 | `glances.<domain>` |
+| Dozzle | `dozzle` | 8080 | `dozzle.<domain>` |
+| Portainer | `portainer` | 9000 | `portainer.<domain>` |
+| Tautulli | `tautulli` | 8181 | `tautulli.<domain>` |
+| Scrutiny | `scrutiny` | 8080 | `scrutiny.<domain>` |
+| DIUN | `diun` | — | — |
+| btop | `btop` | — | Host CLI |

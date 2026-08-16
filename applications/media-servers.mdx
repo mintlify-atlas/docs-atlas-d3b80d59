@@ -1,0 +1,189 @@
+---
+title: "Deploy Plex, Emby, or Jellyfin with Saltbox"
+sidebarTitle: "Media Servers"
+description: "Install and configure Plex, Emby, or Jellyfin as your Saltbox media server. Each is deployed as a Docker container with Traefik routing and automatic TLS."
+---
+
+Saltbox supports three production-ready media servers — Plex, Emby, and Jellyfin — each deployed as a Docker container behind Traefik with automatic TLS. All three are mutually compatible and can even coexist on the same Saltbox host; pick whichever matches your ecosystem, or run more than one if your use case demands it. Media is served from `/mnt/unionfs/Media`, the merged cloud-and-local path that the Saltbox mount stack exposes.
+
+## Choosing a Media Server
+
+<CardGroup cols={3}>
+  <Card title="Plex" icon="play">
+    The most popular self-hosted media server. Requires a free Plex account and a claim token on first install. Best client ecosystem and Tautulli analytics support.
+  </Card>
+  <Card title="Emby" icon="film">
+    A feature-rich alternative to Plex with no mandatory account. Supports hardware transcoding, DLNA, and an optional Emby Premiere subscription.
+  </Card>
+  <Card title="Jellyfin" icon="server">
+    Fully open-source, no account required, no premium tier. Ideal for privacy-focused setups or when you want zero external dependencies.
+  </Card>
+</CardGroup>
+
+---
+
+## Plex
+
+Plex is installed via the `plex` Ansible tag. On a fresh install Saltbox automatically fetches a Plex claim token so that the container is paired to your account immediately.
+
+<Steps>
+  <Step title="Run the playbook">
+    ```bash
+    ansible-playbook saltbox.yml --tags plex
+    ```
+  </Step>
+  <Step title="Access the web UI">
+    Navigate to `https://plex.<your-domain>` to complete the initial library setup wizard.
+  </Step>
+</Steps>
+
+### Key Variables
+
+Override any of the following in your Saltbox inventory file to customize the deployment.
+
+| Variable | Default | Description |
+|---|---|---|
+| `plex_instances` | `["plex"]` | List of instance names; add entries for multi-instance deployments |
+| `plex_role_insecure` | `false` | Allow HTTP (disables Traefik's HTTP→HTTPS redirect for older clients) |
+| `plex_role_open_main_ports` | `false` | Expose port `32400` directly on the host |
+| `plex_role_open_local_ports` | `false` | Expose local-discovery UDP/TCP ports on the host |
+| `plex_role_lan_ip` | `""` | Add a LAN IP to Plex's advertised URLs — useful when hairpin NAT is unavailable |
+| `plex_role_auth_token_proxy` | `""` | HTTP proxy for the auth-token fetch, e.g. `http://gluetun:8888` |
+| `plex_role_themepark_enabled` | `false` | Enable [Theme.Park](https://docs.theme-park.dev/themes/plex/) CSS injection |
+
+### Multi-Instance Plex
+
+Saltbox supports running multiple isolated Plex containers (e.g. a 4K library separate from 1080p) by extending the `plex_instances` list:
+
+```yaml
+# inventory/host_vars/localhost.yml
+plex_instances:
+  - plex
+  - plex4k
+```
+
+Each instance gets its own subdomain (`plex.<domain>`, `plex4k.<domain>`), appdata directory, and transcode path.
+
+<Warning>
+  Do **not** set `plex_role_open_main_ports: true` globally when running multiple instances — it will cause port conflicts. Configure per-instance port overrides instead.
+</Warning>
+
+### Maintenance Tags
+
+| Tag | Purpose |
+|---|---|
+| `plex-reset-codecs` | Delete and regenerate Plex codec bundles |
+| `plex-reclaim` | Remove orphaned media items and reclaim disk space |
+| `plex-auth-token` | Re-fetch and update the Plex authentication token |
+
+```bash
+# Reset codec bundles
+ansible-playbook saltbox.yml --tags plex-reset-codecs
+
+# Reclaim disk space
+ansible-playbook saltbox.yml --tags plex-reclaim
+
+# Refresh auth token
+ansible-playbook saltbox.yml --tags plex-auth-token
+```
+
+### Port Reference
+
+Plex listens on port `32400` inside the container. Traefik proxies HTTPS traffic to this port; direct host exposure is off by default. When `plex_role_open_local_ports` is enabled, Saltbox also publishes the discovery ports used by Plex on the local network:
+
+```yaml
+plex_role_docker_ports_local:
+  - "1900:1900/udp"
+  - "5353:5353/udp"
+  - "8324:8324"
+  - "32410:32410/udp"
+  - "32412:32412/udp"
+  - "32414:32414/udp"
+  - "32469:32469"
+```
+
+---
+
+## Emby
+
+Emby is deployed from the `lscr.io/linuxserver/emby` image and configured automatically by Saltbox to work behind the Traefik reverse proxy.
+
+<Steps>
+  <Step title="Run the playbook">
+    ```bash
+    ansible-playbook saltbox.yml --tags emby
+    ```
+  </Step>
+  <Step title="Access the web UI">
+    Navigate to `https://emby.<your-domain>` to complete setup.
+  </Step>
+</Steps>
+
+Saltbox pre-configures Emby's `system.xml` with the correct proxy settings:
+
+```yaml
+emby_role_config_settings_is_behind_proxy: "true"
+emby_role_config_settings_public_port: "80"
+emby_role_config_settings_public_https_port: "443"
+emby_role_config_settings_enable_https: "true"
+emby_role_config_settings_enable_upnp: "false"
+emby_role_config_settings_database_cache_size_mb: "1024"
+```
+
+Override any of these via inventory if your setup requires different values.
+
+---
+
+## Jellyfin
+
+Jellyfin is deployed from the `ghcr.io/hotio/jellyfin` image and pre-configured by Saltbox with the correct known-proxy and published-server-URI settings for Traefik.
+
+<Steps>
+  <Step title="Run the playbook">
+    ```bash
+    ansible-playbook saltbox.yml --tags jellyfin
+    ```
+  </Step>
+  <Step title="Access the web UI">
+    Navigate to `https://jellyfin.<your-domain>` to complete the initial setup wizard.
+  </Step>
+</Steps>
+
+Saltbox sets the following network defaults automatically:
+
+```yaml
+jellyfin_role_network_settings_known_proxies:
+  - traefik
+jellyfin_role_network_settings_published_server_uri_by_subnet:
+  - "external=https://jellyfin.<your-domain>:443"
+```
+
+Jellyfin also supports multi-instance deployments via `jellyfin_instances` in the same pattern as Plex.
+
+---
+
+## Media Paths
+
+All three media servers mount the unified media tree. In modern Saltbox setups this is provided by the `remote` + `unionfs` mounts:
+
+| Container path | Host path | Purpose |
+|---|---|---|
+| `/data` (legacy mode) | `/mnt/unionfs/Media` | Full media library root |
+| `/transcode` | `/mnt/local/transcodes/<name>` | Transcoding scratch space |
+| `/config` | `/opt/<name>` | Application configuration and database |
+
+<Tip>
+  Transcodes are stored on local storage (not in the cloud union) so that in-progress transcodes don't generate unnecessary rclone upload activity.
+</Tip>
+
+---
+
+## Install All at Once
+
+The `media-server` meta-tag runs the Saltbox default media-server selection:
+
+```bash
+ansible-playbook saltbox.yml --tags media-server
+```
+
+To install a specific server, use its individual tag as shown in each section above.

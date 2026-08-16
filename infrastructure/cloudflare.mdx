@@ -1,0 +1,171 @@
+---
+title: "Cloudflare DNS and TLS Certificate Integration in Saltbox"
+sidebarTitle: "Cloudflare"
+description: "Saltbox integrates with Cloudflare to automatically create DNS A records for each service subdomain and to provide DNS-01 TLS certificate validation."
+---
+
+Saltbox has first-class integration with Cloudflare that serves two distinct purposes: it automatically creates DNS A records for every service subdomain as each role is deployed, and it provides the DNS-01 ACME challenge credentials that Traefik uses to obtain wildcard TLS certificates. Both features activate automatically when you add your Cloudflare credentials to `accounts.yml`.
+
+## What Saltbox Uses Cloudflare For
+
+<CardGroup cols={2}>
+  <Card title="Automatic DNS Records" icon="globe">
+    Every time a Saltbox role is deployed, it calls the Cloudflare API to create (or update) an A record pointing `<subdomain>.<your-domain>` to your server's public IP. No manual DNS management required.
+  </Card>
+  <Card title="DNS-01 TLS Certificates" icon="lock">
+    Traefik uses your Cloudflare API key to create temporary TXT records that satisfy the ACME DNS-01 challenge, enabling wildcard certificate issuance without requiring port 80 to be publicly accessible.
+  </Card>
+</CardGroup>
+
+## Setup
+
+<Steps>
+  <Step title="Add your domain to Cloudflare">
+    Log in to [dash.cloudflare.com](https://dash.cloudflare.com), click **Add a Site**, enter your domain, and follow the prompts to update your domain's nameservers at your registrar. Your domain must be actively using Cloudflare nameservers for DNS record creation and DNS-01 validation to work.
+  </Step>
+
+  <Step title="Retrieve your Global API Key">
+    In the Cloudflare dashboard, go to **My Profile → API Tokens → Global API Key** and click **View**. Copy the key.
+
+    <Warning>
+    You must use the **Global API Key**, not a scoped API Token. Traefik's Let's Encrypt integration for DNS-01 requires the Global API Key to create and delete the temporary TXT records used during certificate issuance. A scoped token with Zone:DNS permissions is not sufficient for the ACME challenge flow that Saltbox uses.
+    </Warning>
+  </Step>
+
+  <Step title="Add credentials to accounts.yml">
+    Edit `/srv/git/saltbox/accounts.yml` and fill in your Cloudflare email and Global API Key:
+
+    ```yaml
+    cloudflare:
+      email: you@example.com
+      api: your_global_api_key_here
+    ```
+
+    Save the file. Saltbox evaluates `cloudflare_is_enabled` from `inventories/group_vars/all.yml` and it becomes `true` as soon as both `email` and `api` are non-empty strings.
+  </Step>
+
+  <Step title="Confirm the DNS provider in adv_settings.yml">
+    Saltbox defaults to Cloudflare as the Traefik DNS provider. Verify (or set) this in `adv_settings.yml`:
+
+    ```yaml
+    traefik:
+      provider: cloudflare
+    ```
+
+    This is the default and you only need to change it if you are switching to a different DNS provider.
+  </Step>
+</Steps>
+
+## How cloudflare_is_enabled Works
+
+Saltbox checks all three conditions in `inventories/group_vars/all.yml` before treating Cloudflare as active:
+
+```yaml
+cloudflare_is_enabled: "{{ (cloudflare is defined) and
+                           (cloudflare is not none) and
+                           (cloudflare | trim | length > 0) and
+                           (cloudflare.email is defined) and
+                           (cloudflare.email is not none) and
+                           (cloudflare.email | trim | length > 0) and
+                           (cloudflare.api is defined) and
+                           (cloudflare.api is not none) and
+                           (cloudflare.api | trim | length > 0) }}"
+```
+
+When `cloudflare_is_enabled` is `false` (empty or missing credentials), Saltbox falls back to HTTP-01 validation for certificates and skips DNS record creation. This means the system still works — but you will need port 80 publicly accessible for certificate issuance.
+
+## DNS Record Options
+
+Control which record types are created with these `adv_settings.yml` flags:
+
+```yaml
+dns:
+  ipv4: yes    # create A records pointing to your public IPv4 address
+  ipv6: no     # create AAAA records pointing to your public IPv6 address
+  proxied: no  # whether records should be proxied through Cloudflare CDN
+```
+
+<ParamField path="dns.ipv4" type="boolean" default="yes">
+  When `yes`, Saltbox creates A records for each service subdomain. Disable only if your server has no public IPv4 address.
+</ParamField>
+
+<ParamField path="dns.ipv6" type="boolean" default="no">
+  When `yes`, Saltbox also creates AAAA records pointing to your server's public IPv6 address. Requires `dns.ipv6: yes` to also be set for Docker network IPv6 support.
+</ParamField>
+
+<ParamField path="dns.proxied" type="boolean" default="no">
+  Whether to proxy traffic through Cloudflare's CDN (the "orange cloud" in the Cloudflare dashboard).
+
+  This is **disabled by default** because many Saltbox services (particularly Plex and media clients) require a direct TCP connection that Cloudflare's HTTP proxy cannot carry. Enabling the proxy breaks Plex remote access, Sonarr/Radarr API calls from mobile apps, and any service using non-HTTP protocols.
+</ParamField>
+
+## The Cloudflare Role
+
+The `cloudflare` role runs as a subtask within each service role deployment. It includes four subtask files:
+
+| Subtask | Purpose |
+|---------|---------|
+| `variables.yml` | Resolves the public IP address and subdomain for the current role |
+| `subdomains.yml` | Creates or updates A/AAAA records via the Cloudflare API |
+| `purge_cache.yml` | Purges Cloudflare CDN cache for the affected URLs (when proxied) |
+| `configuration_rules.yml` | Applies Cloudflare zone configuration rules if needed |
+
+To re-run DNS record creation for all Saltbox services at once:
+
+```bash
+ansible-playbook saltbox.yml --tags cloudflare
+```
+
+<Note>
+Running `--tags cloudflare` only recreates DNS records. It does not reinstall any services. Use it after changing your server's IP address, after transferring to a new host, or after clearing DNS records that were accidentally deleted.
+</Note>
+
+## Traefik DNS-01 Integration
+
+Traefik receives your Cloudflare credentials through environment variables injected into the Traefik container at deployment time:
+
+```yaml
+# From roles/traefik/defaults/main.yml
+traefik_dns_provider_cloudflare_tmp:
+  CLOUDFLARE_EMAIL: "{{ cloudflare.email }}"
+  CLOUDFLARE_API_KEY: "{{ cloudflare.api }}"
+```
+
+These variables are merged into the Traefik container's environment only when `cloudflare_is_enabled` is `true`. Traefik uses them to authenticate with the Cloudflare API when creating and removing the `_acme-challenge` TXT records required for DNS-01 certificate issuance.
+
+The certificate resolver is configured with Cloudflare's own resolvers to check TXT record propagation:
+
+```yaml
+traefik_dns_resolvers: "1.1.1.1:53,1.0.0.1:53"
+```
+
+## Alternative DNS Providers
+
+Saltbox supports multiple DNS providers for the Traefik DNS-01 challenge. If your domain is not on Cloudflare, configure the appropriate provider's credentials in `providers.yml` and set `traefik.provider` in `adv_settings.yml`:
+
+```yaml
+# adv_settings.yml
+traefik:
+  provider: porkbun   # replace with your provider
+```
+
+Supported providers and their required environment variables (defined in `roles/traefik/defaults/main.yml`):
+
+| Provider | Key Variables |
+|----------|--------------|
+| `cloudflare` | `CLOUDFLARE_EMAIL`, `CLOUDFLARE_API_KEY` |
+| `cloudns` | `CLOUDDNS_CLIENT_ID`, `CLOUDDNS_EMAIL`, `CLOUDDNS_PASSWORD` |
+| `duckdns` | `DUCKDNS_TOKEN` |
+| `dynu` | `DYNU_API_KEY` |
+| `godaddy` | `GODADDY_API_KEY`, `GODADDY_API_SECRET` |
+| `hetzner` | `HETZNER_API_KEY` |
+| `linode` | `LINODE_TOKEN` |
+| `namecheap` | `NAMECHEAP_API_USER`, `NAMECHEAP_API_KEY` |
+| `namedotcom` | `NAMECOM_USERNAME`, `NAMECOM_API_TOKEN`, `NAMECOM_SERVER` |
+| `netcup` | `NETCUP_CUSTOMER_NUMBER`, `NETCUP_API_KEY`, `NETCUP_API_PASSWORD` |
+| `porkbun` | `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY` |
+| `powerdns` | `PDNS_API_KEY`, `PDNS_API_URL` |
+
+<Note>
+When using a non-Cloudflare DNS provider, automatic DNS A record creation during role deployment is not available — that feature is Cloudflare-specific. You will need to create service subdomains manually in your DNS provider's dashboard. TLS certificate issuance via DNS-01 still works with any supported provider.
+</Note>

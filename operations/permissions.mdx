@@ -1,0 +1,111 @@
+---
+title: "Fix File and Directory Permissions in Saltbox Installs"
+sidebarTitle: "Permissions"
+description: "Saltbox provides a fix-permissions tag to repair ownership on Docker appdata directories when permissions have drifted or a service fails to start."
+---
+
+Every Docker container in Saltbox runs as the Saltbox user — a dedicated non-root account created during installation whose name is set in `accounts.yml`. All application configuration data under `/opt/` and local media under `/mnt/local/` must be owned by this user and group. When ownership drifts — whether from a manual edit, a failed role run, or a data migration — containers will fail to start or report permission-denied errors when trying to write their configuration.
+
+<Tip>
+  Before reaching for `fix-permissions`, check the container's logs first. Permission problems produce distinctive error messages that confirm whether ownership is the actual cause:
+
+  ```bash
+  docker logs sonarr
+  docker logs radarr
+  docker logs plex
+  ```
+
+  Look for `permission denied`, `cannot open`, or `failed to create` messages pointing at paths inside `/opt/<service>/`.
+</Tip>
+
+## The fix-permissions Role
+
+Saltbox provides a dedicated role that recursively corrects ownership on all three directories that Saltbox manages:
+
+```bash
+ansible-playbook saltbox.yml --tags fix-permissions
+```
+
+The role runs three `chown -R` operations as root, setting `<user>:<user>` ownership on:
+
+| Directory | Purpose |
+|-----------|---------|
+| `/opt/` | All Docker appdata (configuration, databases, logs for every service) |
+| `/mnt/local/` | Local media storage and the local half of the mergerfs union mount |
+| `/home/<user>/` | The Saltbox user's home directory, including rclone config and Saltbox logs |
+
+This is the safe, supported way to reset permissions. The role is idempotent — running it multiple times produces the same result.
+
+<Warning>
+  Do **not** manually run `chown -R` or `chmod -R` on `/opt/` without using the Saltbox role. Ad-hoc recursive permission changes can inadvertently alter socket files, UNIX-domain sockets used by PostgreSQL or other services, and files that intentionally have different ownership for security reasons. The Saltbox role handles these edge cases correctly.
+</Warning>
+
+## When to Run fix-permissions
+
+<Steps>
+  <Step title="Check container logs for permission errors">
+    ```bash
+    docker logs <container-name> 2>&1 | grep -i "permission\|denied\|cannot open\|failed"
+    ```
+
+    If you see permission-related errors referencing paths under `/opt/`, proceed to the next step.
+  </Step>
+  <Step title="Verify the affected directory ownership">
+    ```bash
+    ls -la /opt/<service>/
+    ```
+
+    If you see `root root` or any owner other than your Saltbox username, the ownership has drifted and needs to be corrected.
+  </Step>
+  <Step title="Run fix-permissions">
+    ```bash
+    cd /srv/git/saltbox
+    ansible-playbook saltbox.yml --tags fix-permissions
+    ```
+
+    The playbook will print each `chown` task as it runs. No containers need to be stopped first — `chown` operates on the filesystem independently of running containers.
+  </Step>
+  <Step title="Restart the affected container">
+    After permissions are corrected, restart the container to pick up the changes:
+
+    ```bash
+    docker restart <container-name>
+    ```
+
+    Then confirm it started cleanly:
+
+    ```bash
+    docker logs <container-name> --tail 20
+    ```
+  </Step>
+</Steps>
+
+## Common Scenarios That Require fix-permissions
+
+**After manually editing config files** — opening a config file with `sudo nano` writes it back as root. Run `fix-permissions` after any manual config edits made with elevated privileges.
+
+**After a failed role run** — if an Ansible task fails mid-role while writing files, some paths may be owned by root. Re-running the role or running `fix-permissions` corrects this.
+
+**After migrating data from another system** — tarball extracts, `rsync` copies, or `cp` operations run as root will preserve root ownership. Always run `fix-permissions` after importing data into `/opt/`.
+
+**After a restore** — the restore role runs its own permissions task automatically, but if you manually moved files or extracted archives outside of the restore playbook, run `fix-permissions` to normalize everything.
+
+## Media Directory Permissions
+
+The `/mnt/local/Media` directory is the local upload staging area for Cloudplow. It must be owned by the Saltbox user:
+
+```bash
+ls -la /mnt/local/Media
+```
+
+Cloud mounts at `/mnt/remote/` are provided by rclone FUSE and are read-only at the filesystem level — those permissions are controlled by rclone's mount flags, not by `chown`. Do not attempt to change ownership on FUSE-mounted paths.
+
+## Collecting Diagnostic Information
+
+When troubleshooting permission issues or other system problems, the `diag` tag collects a snapshot of relevant system state:
+
+```bash
+ansible-playbook saltbox.yml --tags diag
+```
+
+The diag role gathers information including Cloudflare SSL/TLS configuration, active filesystem mounts, and system variables — useful context when seeking help on the Saltbox Discord.

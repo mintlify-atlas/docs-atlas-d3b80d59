@@ -1,0 +1,108 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Saltbox",
+  "projectDescription": "An Ansible-based solution for rapidly deploying a Docker-containerized cloud media server on Ubuntu, automating setup of media acquisition, streaming, and management applications behind Traefik with optional Cloudflare integration.",
+  "theme": "aspen",
+  "primaryColor": "#9c9c9c",
+  "lightColor": "#3e3d3d",
+  "darkColor": "#dbdada",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "prerequisites"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/accounts",
+              "configuration/settings",
+              "configuration/adv-settings",
+              "configuration/providers"
+            ]
+          },
+          {
+            "group": "Core Infrastructure",
+            "pages": [
+              "infrastructure/docker",
+              "infrastructure/traefik",
+              "infrastructure/rclone-mounts",
+              "infrastructure/cloudflare"
+            ]
+          },
+          {
+            "group": "Applications",
+            "pages": [
+              "applications/media-servers",
+              "applications/download-clients",
+              "applications/arr-apps",
+              "applications/authentication",
+              "applications/monitoring"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/backup-restore",
+              "operations/updating",
+              "operations/sandbox",
+              "operations/permissions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Ansible-driven automated deployment of 100+ Docker-containerized services",
+    "Traefik reverse proxy with automatic TLS via Let's Encrypt or ZeroSSL",
+    "Rclone cloud storage mounts with UnionFS for transparent local/remote media access",
+    "Cloudplow automated media upload to cloud remotes",
+    "Authelia / Authentik SSO and 2FA for all services",
+    "Flexible multi-instance role architecture (e.g. multiple Sonarr/Radarr instances)",
+    "Cloudflare DNS integration with automatic record management",
+    "Built-in backup and restore with local, rclone, and rsync destinations",
+    "CrowdSec integration for intrusion detection",
+    "Support for Plex, Emby, and Jellyfin media servers"
+  ],
+  "publicApiSurface": [
+    "ansible-playbook saltbox.yml --tags saltbox",
+    "ansible-playbook saltbox.yml --tags mediabox",
+    "ansible-playbook saltbox.yml --tags feederbox",
+    "ansible-playbook saltbox.yml --tags preinstall",
+    "ansible-playbook saltbox.yml --tags core",
+    "ansible-playbook saltbox.yml --tags plex",
+    "ansible-playbook saltbox.yml --tags sonarr",
+    "ansible-playbook saltbox.yml --tags radarr",
+    "ansible-playbook saltbox.yml --tags lidarr",
+    "ansible-playbook saltbox.yml --tags bazarr",
+    "ansible-playbook saltbox.yml --tags prowlarr",
+    "ansible-playbook saltbox.yml --tags sabnzbd",
+    "ansible-playbook saltbox.yml --tags nzbget",
+    "ansible-playbook saltbox.yml --tags qbittorrent",
+    "ansible-playbook saltbox.yml --tags deluge",
+    "ansible-playbook saltbox.yml --tags traefik",
+    "ansible-playbook saltbox.yml --tags authelia",
+    "ansible-playbook saltbox.yml --tags authentik",
+    "ansible-playbook saltbox.yml --tags backup",
+    "ansible-playbook saltbox.yml --tags restore",
+    "ansible-playbook saltbox.yml --tags cloudplow",
+    "ansible-playbook saltbox.yml --tags portainer",
+    "ansible-playbook saltbox.yml --tags tautulli",
+    "ansible-playbook saltbox.yml --tags overseerr",
+    "ansible-playbook saltbox.yml --tags grafana",
+    "ansible-playbook saltbox.yml --tags fix-permissions",
+    "accounts.yml",
+    "settings.yml",
+    "adv_settings.yml",
+    "backup_config.yml",
+    "providers.yml"
+  ]
+}

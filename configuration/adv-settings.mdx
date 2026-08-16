@@ -1,0 +1,134 @@
+---
+title: "Advanced Settings: DNS, Docker, GPU, and Traefik Tuning"
+sidebarTitle: "Adv Settings"
+description: "Fine-tune Saltbox behavior with adv_settings.yml: configure IPv6 DNS, Docker log driver, GPU passthrough, Traefik certificate method, and error pages."
+---
+
+`adv_settings.yml` exposes knobs for behaviors that most users never need to change. The defaults are deliberately conservative and suitable for the majority of single-server Saltbox deployments. Only modify this file if you have a specific reason — for example, switching from Cloudflare DNS-01 certificate validation to HTTP-01, enabling IPv6 DNS records, or passing through an Intel GPU for hardware transcoding.
+
+<Note>
+  If you are unsure whether you need to change a setting here, you almost certainly do not. The defaults in this file are safe for standard deployments. Review each option carefully before editing.
+</Note>
+
+## Full Default File
+
+```yaml
+---
+dns:
+  ipv4: yes
+  ipv6: no
+  proxied: no
+docker:
+  json_driver: no
+gpu:
+  intel: yes
+mounts:
+  ipv4_only: no
+system:
+  timezone: auto
+traefik:
+  cert:
+    http_validation: no
+    zerossl: no
+  error_pages: no
+  hsts: no
+  metrics: no
+  provider: cloudflare
+  subdomains:
+    dash: dash
+    metrics: metrics
+```
+
+## DNS Settings
+
+These settings control how Saltbox creates DNS records for your subdomains through your DNS provider.
+
+<ParamField path="dns.ipv4" type="boolean" default="yes">
+  Whether to create IPv4 (`A`) DNS records for each Saltbox service subdomain. This should remain `yes` for virtually all deployments — turning it off will prevent Saltbox from automatically creating the DNS entries that route traffic to your server.
+</ParamField>
+
+<ParamField path="dns.ipv6" type="boolean" default="no">
+  Whether to create IPv6 (`AAAA`) DNS records in addition to IPv4 records. Enable this only if your server has a publicly routable IPv6 address and you want services reachable over IPv6. Saltbox will automatically detect your server's public IPv6 address when this is `yes`.
+</ParamField>
+
+<ParamField path="dns.proxied" type="boolean" default="no">
+  Whether to proxy all DNS records through Cloudflare's CDN (orange cloud). When `yes`, traffic to your subdomains passes through Cloudflare's network, which provides DDoS protection and hides your origin IP. When `no`, DNS records point directly to your server's IP address. Note that enabling proxying can interfere with non-HTTP services and may require additional Cloudflare configuration.
+</ParamField>
+
+## Docker Settings
+
+<ParamField path="docker.json_driver" type="boolean" default="no">
+  Whether to configure Docker's logging driver to use the `json-file` driver with structured tags. When `yes`, Docker writes container logs to JSON files on disk with metadata tags in the format `image_name|container_name|image_id|container_id`. This is useful if you want to ship logs to an external aggregator (e.g. Loki, Splunk). When `no`, Docker uses its default logging behavior. Enabling this increases disk I/O and requires periodic log rotation.
+</ParamField>
+
+## GPU Settings
+
+<ParamField path="gpu.intel" type="boolean" default="yes">
+  Whether Saltbox should detect and configure Intel GPU passthrough for Docker containers. When `yes`, Saltbox checks for an Intel integrated or discrete GPU and configures the appropriate device mappings so that containers like Plex and Emby can use Intel Quick Sync for hardware-accelerated transcoding. Set to `no` if your server has no Intel GPU or if you are using Nvidia hardware instead.
+</ParamField>
+
+## Mount Settings
+
+<ParamField path="mounts.ipv4_only" type="boolean" default="no">
+  Whether to bind Rclone FUSE mounts to IPv4 interfaces only. Enable this if your server is on a network where IPv6 connectivity is unstable or misconfigured, which can cause Rclone mounts to stall or fail. Most servers do not need this — only enable it if you are experiencing mount reliability issues.
+</ParamField>
+
+## System Settings
+
+<ParamField path="system.timezone" type="string" default="auto">
+  The timezone to configure for the server and all Docker containers. The special value `auto` detects the correct timezone from your server's public IP address geolocation. Alternatively, specify an explicit [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) such as `America/New_York`, `Europe/London`, or `Asia/Tokyo`. Using an explicit timezone is recommended for servers in data centers whose IP geolocation may not match the intended timezone.
+</ParamField>
+
+## Traefik Settings
+
+These settings control Traefik's certificate acquisition strategy, security headers, metrics exposure, the DNS provider used for ACME challenges, and the subdomains for the Traefik dashboard and metrics endpoint.
+
+### Certificate Settings
+
+<ParamField path="traefik.cert.http_validation" type="boolean" default="no">
+  Whether to use the ACME **HTTP-01** challenge instead of DNS-01 for obtaining TLS certificates. HTTP-01 requires that your server be publicly reachable on port 80 and does **not** require a DNS provider API key. Use this if you cannot or do not want to use a DNS provider API. Note that HTTP-01 cannot issue wildcard certificates, so each subdomain will receive its own certificate. DNS-01 (the default) is preferred because it works even when port 80 is blocked and supports wildcard certificates.
+</ParamField>
+
+<ParamField path="traefik.cert.zerossl" type="boolean" default="no">
+  Whether to use [ZeroSSL](https://zerossl.com/) as the ACME certificate authority instead of Let's Encrypt. ZeroSSL offers an alternative root certificate chain that may be preferred in environments where Let's Encrypt's root is not trusted or rate limits are encountered. Both are free and issue publicly trusted certificates. Leave as `no` unless you have a specific reason to switch.
+</ParamField>
+
+### Security and Features
+
+<ParamField path="traefik.error_pages" type="boolean" default="no">
+  Whether to enable custom branded error pages for HTTP errors (404, 500, 502, etc.) routed through Traefik. When enabled, Saltbox deploys an error pages container and configures Traefik middleware to serve styled error pages instead of Traefik's default plain-text responses.
+</ParamField>
+
+<ParamField path="traefik.hsts" type="boolean" default="no">
+  Whether to enable **HTTP Strict Transport Security** (HSTS) headers on all responses routed through Traefik. HSTS instructs browsers to only connect to your services over HTTPS for a set period, preventing downgrade attacks. Enable this once you are confident that all your services are correctly configured for HTTPS and you do not need to fall back to HTTP.
+</ParamField>
+
+<ParamField path="traefik.metrics" type="boolean" default="no">
+  Whether to enable the Traefik metrics endpoint (Prometheus-compatible). When `yes`, Traefik exposes a `/metrics` endpoint accessible at the subdomain defined in `traefik.subdomains.metrics`. You can then scrape this endpoint with Prometheus or a compatible collector for observability dashboards.
+</ParamField>
+
+### Provider and Subdomains
+
+<ParamField path="traefik.provider" type="string" default="cloudflare">
+  The DNS provider that Traefik will use for ACME DNS-01 certificate challenges. This must match one of the provider keys defined in `providers.yml`. Common values include `cloudflare`, `hetzner`, `linode`, `namecheap`, `porkbun`, and `godaddy`. See the [Providers page](/configuration/providers) for the full list of supported providers and their required credentials.
+
+  <Note>
+    Internally, Saltbox maps `powerdns` to `pdns` for configuration compatibility. If you use PowerDNS, set this to `powerdns` — Saltbox handles the remapping automatically.
+  </Note>
+</ParamField>
+
+<ParamField path="traefik.subdomains.dash" type="string" default="dash">
+  The subdomain under your domain where the Traefik dashboard will be served. With the default `dash` and domain `example.com`, the dashboard is accessible at `https://dash.example.com`. The dashboard is protected by Authelia SSO.
+</ParamField>
+
+<ParamField path="traefik.subdomains.metrics" type="string" default="metrics">
+  The subdomain under your domain where the Traefik metrics endpoint will be exposed (only active when `traefik.metrics` is `yes`). With the default `metrics` and domain `example.com`, the metrics are available at `https://metrics.example.com`.
+</ParamField>
+
+## Editing adv_settings.yml
+
+```bash
+nano /srv/git/saltbox/adv_settings.yml
+```
+
+After saving, re-run the affected Saltbox tags. For example, changes to `traefik.*` settings require re-running the `traefik` tag; changes to `dns.*` settings take effect the next time a role runs DNS tasks.
