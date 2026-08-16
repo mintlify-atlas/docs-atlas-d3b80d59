@@ -15,7 +15,7 @@ description: "Set DNS provider credentials in providers.yml for Traefik DNS-01 A
 The provider that Traefik uses is determined by the `traefik.provider` field in `adv_settings.yml` (default: `cloudflare`). Whatever value is set there, Saltbox expects the matching key in `providers.yml` to have valid credentials populated. For example, if `traefik.provider: hetzner`, then `providers.yml` must have a non-empty `hetzner.api_key`.
 
 <Note>
-  If you are using **Cloudflare** as your provider, your credentials are already provided in `accounts.yml` under `cloudflare.email` and `cloudflare.api`. You do **not** need to duplicate them in `providers.yml` — the `cloudflare` section here is only relevant if your `accounts.yml` Cloudflare fields are empty and you want to drive certificate issuance from `providers.yml` directly.
+  If you are using **Cloudflare** as your provider, your credentials are configured in `accounts.yml` under `cloudflare.email` and `cloudflare.api`. Cloudflare does **not** have an entry in `providers.yml` — Saltbox reads Cloudflare credentials exclusively from `accounts.yml`.
 </Note>
 
 ## Full Default File
@@ -91,27 +91,9 @@ powerdns:
 
 Set `traefik.provider: cloudflare` in `adv_settings.yml`.
 
-```yaml
-# Not required in providers.yml for standard Saltbox setups —
-# use accounts.yml cloudflare.email and cloudflare.api instead.
-```
+Cloudflare credentials are configured in **`accounts.yml`**, not in `providers.yml`. The `providers.yml` file does not contain a `cloudflare` key. If `traefik.provider` is set to `cloudflare`, Saltbox reads `cloudflare.email` and `cloudflare.api` directly from `accounts.yml`.
 
-If you wish to configure Cloudflare solely via `providers.yml`, add:
-
-```yaml
-# providers.yml — Cloudflare (alternative to accounts.yml fields)
-cloudflare:
-  email: you@example.com
-  api: your_global_api_key_here
-```
-
-<ParamField path="cloudflare.email" type="string">
-  The email address for your Cloudflare account.
-</ParamField>
-
-<ParamField path="cloudflare.api" type="string">
-  Your Cloudflare **Global API Key** (not a scoped API token). Found under **My Profile → API Tokens → Global API Key** in the Cloudflare dashboard.
-</ParamField>
+See the [Accounts](/configuration/accounts) page for details on setting those fields.
 
 ---
 

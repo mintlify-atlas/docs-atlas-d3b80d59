@@ -12,7 +12,7 @@ Setting up a self-hosted media server typically involves installing Docker, conf
 
 ## Deployment Models
 
-Saltbox supports three first-class installation profiles, each implemented as a top-level Ansible tag. Choose the one that best matches your setup.
+Saltbox supports five first-class installation profiles, each implemented as a top-level Ansible tag. Choose the one that best matches your setup.
 
 <CardGroup cols={2}>
   <Card title="saltbox" icon="server">
@@ -26,6 +26,9 @@ Saltbox supports three first-class installation profiles, each implemented as a 
   </Card>
   <Card title="preinstall" icon="wrench">
     Prepares the OS without installing any apps. Runs kernel tweaks, creates the service user, installs Rclone, Docker, and Traefik. Run this first when you want to customize before a full install.
+  </Card>
+  <Card title="core" icon="layer-group">
+    Installs the complete infrastructure layer (kernel, user, Docker, Traefik, mounts) without deploying any media or download applications. Useful when you want the platform ready before selectively adding individual app roles.
   </Card>
 </CardGroup>
 

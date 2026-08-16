@@ -159,6 +159,14 @@ ansible-playbook saltbox.yml --tags autoscan
 ansible-playbook saltbox.yml --tags unpackerr
 ```
 
+### Arr Database Management
+
+The `arr-db` tag runs the `arr_db` role, which provides database maintenance utilities for the Arr suite (vacuum, integrity checks, and repair tasks):
+
+```bash
+ansible-playbook saltbox.yml --tags arr-db
+```
+
 ---
 
 ## Plex Analytics
@@ -171,7 +179,7 @@ Tautulli connects to Plex and records detailed playback history, user statistics
 ansible-playbook saltbox.yml --tags tautulli
 ```
 
-Tautulli runs on port `8181` (`ghcr.io/hotio/tautulli`) and is accessible at `https://tautulli.<your-domain>`. It uses `traefik_default_sso_middleware` by default so the dashboard is SSO-protected, while notification webhook paths (`/api`, `/newsletter`, `/image`, `/pms_image_proxy`) are exempt.
+Tautulli runs on port `8181` (`ghcr.io/hotio/tautulli`) and is accessible at `https://tautulli.<your-domain>`. It uses `tautulli_role_traefik_sso_middleware` (which defaults to `traefik_default_sso_middleware`) so the dashboard is SSO-protected, while notification webhook paths (`/api`, `/newsletter`, `/image`, `/pms_image_proxy`) are exempt.
 
 ---
 

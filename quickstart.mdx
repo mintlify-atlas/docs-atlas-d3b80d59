@@ -26,13 +26,7 @@ This guide walks you through a complete Saltbox installation on a fresh Ubuntu 2
   </Step>
 
   <Step title="Install Ansible and dependencies">
-    Saltbox requires Ansible and a Python virtual environment. The repository includes a setup script that handles this automatically:
-
-    ```bash
-    sudo bash /srv/git/saltbox/scripts/saltbox_docker.sh
-    ```
-
-    Alternatively, install Ansible manually into the expected virtual environment path:
+    Saltbox requires Ansible and a Python virtual environment. Install Ansible into the expected virtual environment path that `ansible.cfg` references:
 
     ```bash
     sudo python3 -m venv /srv/ansible/venv
@@ -87,7 +81,7 @@ This guide walks you through a complete Saltbox installation on a fresh Ubuntu 2
     ---
     apprise:
     cloudflare:
-      api: YOUR_CLOUDFLARE_API_TOKEN
+      api: YOUR_CLOUDFLARE_GLOBAL_API_KEY
       email: you@yourdomain.com
     dockerhub:
       token:
@@ -102,7 +96,7 @@ This guide walks you through a complete Saltbox installation on a fresh Ubuntu 2
 
     | Field | Description |
     |---|---|
-    | `cloudflare.api` | Your Cloudflare API token (Zone:DNS:Edit permission). Required for automatic TLS via DNS challenge. |
+    | `cloudflare.api` | Your Cloudflare Global API Key. Required for automatic TLS via DNS challenge and automatic DNS record creation. |
     | `cloudflare.email` | The email address associated with your Cloudflare account. |
     | `user.domain` | The root domain Traefik will use for all service subdomains (e.g. `yourdomain.com`). |
     | `user.email` | Contact email for Let's Encrypt certificate registration. |

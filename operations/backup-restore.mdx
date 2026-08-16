@@ -15,7 +15,7 @@ Saltbox includes a built-in backup and restore system that archives every Docker
 The backup role archives every subdirectory inside `/opt/` — one `.tar` file per application — along with your Saltbox configuration files:
 
 - All service appdata directories under `/opt/` (Sonarr, Radarr, Plex, SABnzbd, etc.)
-- `accounts.yml`, `settings.yml`, `adv_settings.yml`, `backup_config.yml`, `providers.yml`
+- `accounts.yml`, `settings.yml`, `adv_settings.yml`, `backup_config.yml`, `providers.yml`, `motd.yml`, `hetzner_vlan.yml`
 - `rclone.conf` — your rclone remote configuration
 - `inventories/host_vars/localhost.yml` — host-level variable overrides
 - Systemd unit files from `/etc/systemd/system/`
@@ -168,9 +168,10 @@ The restore role downloads your backup from the rclone remote (if no local backu
 
     The restore role will:
     1. Download the backup from the rclone remote if no local copy exists
-    2. Rename any existing appdata folders to `<name>_bak` to prevent data loss
-    3. Extract all `.tar` archives into `/opt/`
-    4. Reset ownership and permissions on the restored data
+    2. Check that no `<name>_bak` folders already exist in `/opt/` — it will **fail** if they do, to prevent accidental data loss. Remove any leftover `_bak` folders before running restore.
+    3. Rename any existing appdata folders to `<name>_bak`
+    4. Extract all `.tar` archives into `/opt/`
+    5. Reset ownership and permissions on the restored data
   </Step>
   <Step title="Continue the install">
     After the restore completes, re-run your desired install tag (e.g., `saltbox`, `mediabox`, or individual app tags) to recreate Docker containers pointing to the restored configuration.

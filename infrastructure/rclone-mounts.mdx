@@ -1,10 +1,10 @@
 ---
-title: "Cloud Storage Mounts with Rclone and UnionFS in Saltbox"
+title: "Cloud Storage Mounts with Rclone and MergerFS in Saltbox"
 sidebarTitle: "Rclone Mounts"
-description: "Saltbox mounts cloud storage via Rclone and merges it with local storage using UnionFS, creating a unified media filesystem at /mnt/unionfs."
+description: "Saltbox mounts cloud storage via Rclone and merges it with local storage using MergerFS, creating a unified media filesystem at /mnt/unionfs."
 ---
 
-Saltbox uses Rclone to mount cloud storage remotes as local filesystems and then merges those mounts with local disk storage via UnionFS. The result is a single transparent path, `/mnt/unionfs`, through which all Saltbox services (Sonarr, Radarr, Plex, etc.) read and write media without needing to know whether a file is local or in the cloud. This page explains the full architecture and how to configure it.
+Saltbox uses Rclone to mount cloud storage remotes as local filesystems and then merges those mounts with local disk storage via MergerFS. The result is a single transparent path, `/mnt/unionfs`, through which all Saltbox services (Sonarr, Radarr, Plex, etc.) read and write media without needing to know whether a file is local or in the cloud. This page explains the full architecture and how to configure it.
 
 ## Architecture Overview
 
@@ -12,17 +12,17 @@ Saltbox uses Rclone to mount cloud storage remotes as local filesystems and then
 /mnt/local/Media          ← Local disk (new downloads land here first)
 /mnt/remote/<name>        ← Cloud remote mounted by Rclone (read from cloud)
           ↓                            ↓
-          └──────── UnionFS ───────────┘
+          └──────── MergerFS ──────────┘
                        ↓
                /mnt/unionfs          ← What Saltbox apps see
 ```
 
-When an application reads a file, UnionFS checks local storage first, then falls back to the remote mount. Writes always go to `/mnt/local`. A background upload agent (Cloudplow) periodically moves accumulated media from `/mnt/local/Media` to the cloud remote, keeping local disk usage under control.
+When an application reads a file, MergerFS checks local storage first, then falls back to the remote mount. Writes always go to `/mnt/local`. A background upload agent (Cloudplow) periodically moves accumulated media from `/mnt/local/Media` to the cloud remote, keeping local disk usage under control.
 
 ## Prerequisites
 
 <Note>
-Rclone must be configured before Saltbox can create remote mounts. Run `rclone config` as the Saltbox user after the `preinstall` tag completes to create your remote(s). The remote name you configure in `rclone config` must exactly match the `remote:` value in `settings.yml`.
+Before Saltbox can create remote mounts, each cloud remote must be configured in Rclone's own configuration file. Run `rclone config` as the Saltbox user after the `preinstall` tag completes to create your remote(s). The remote name you configure in `rclone config` must exactly match the `remote:` value in `settings.yml`. Saltbox validates this at mount time by running `rclone listremotes` — if the name is missing, the role will fail with an error.
 </Note>
 
 Rclone itself is installed by the `rclone` role, which is automatically included when you run `--tags mounts`. The version to install is controlled by:
@@ -49,7 +49,7 @@ rclone:
         enable_refresh: yes    # keep directory listing cache fresh
         mount: yes             # create a systemd mount for this remote
         template: google       # mount template to use (from mount-templates repo)
-        union: yes             # include in the UnionFS overlay
+        union: yes             # include in the MergerFS overlay
         upload: yes            # allow Cloudplow to upload from this remote
         upload_from: /mnt/local/Media   # path Cloudplow monitors for new files
         vfs_cache:
@@ -71,7 +71,7 @@ rclone:
 </ParamField>
 
 <ParamField path="settings.union" type="boolean" default="yes">
-  Whether this remote is included in the UnionFS overlay at `/mnt/unionfs`. If `no`, the mount exists at `/mnt/remote/<name>` but is not visible through `/mnt/unionfs`.
+  Whether this remote is included in the MergerFS overlay at `/mnt/unionfs`. If `no`, the mount exists at `/mnt/remote/<name>` but is not visible through `/mnt/unionfs`.
 </ParamField>
 
 <ParamField path="settings.upload" type="boolean" default="yes">
@@ -116,6 +116,8 @@ When you run `--tags mounts`, the `remote` role performs these steps:
 4. Creates the `/mnt/remote` directory.
 5. For each remote in `rclone.remotes` with `mount: yes` and a non-NFS template, includes `remote.yml` tasks to configure the systemd mount unit.
 6. NFS remotes use a separate `nfs.yml` task path.
+
+After the `remote` role completes, the `unionfs` role installs MergerFS and starts the `saltbox_managed_mergerfs.service` systemd unit, which merges `/mnt/local` and all `union: yes` remotes into `/mnt/unionfs`.
 
 Mount units are managed as `saltbox_managed_*` systemd services, which the Docker controller understands and coordinates with during Docker restarts.
 
@@ -182,7 +184,7 @@ rclone:
           size: 50G
 ```
 
-Both remotes will be merged into `/mnt/unionfs` by UnionFS.
+Both remotes will be merged into `/mnt/unionfs` by MergerFS.
 
 ## IPv4-Only Mounts
 

@@ -94,6 +94,16 @@ DockerHub enforces rate limits on unauthenticated image pulls (100 pulls per 6 h
   Leave blank to disable notifications entirely.
 </ParamField>
 
+## Related Configuration Files
+
+In addition to `accounts.yml`, Saltbox uses several other configuration files that are copied into `/srv/git/saltbox/` during setup:
+
+- **`settings.yml`** — Shell preference, download paths, Rclone remotes, and Authelia settings.
+- **`adv_settings.yml`** — DNS, Docker, GPU, Traefik, and system timezone options.
+- **`providers.yml`** — API credentials for alternative DNS providers (Hetzner, Linode, Namecheap, etc.).
+- **`backup_config.yml`** — Controls scheduled backups: local destination, Rclone destination, rsync settings, and snapshot options.
+- **`hetzner_vlan.yml`** — Only needed if you are deploying Saltbox on Hetzner Cloud with VLAN networking. Contains `hetzner_vlan.client_number` and `hetzner_vlan.vlan_id`. Leave this file at its defaults unless you are specifically configuring a Hetzner VLAN setup.
+
 ## Editing accounts.yml
 
 <Steps>

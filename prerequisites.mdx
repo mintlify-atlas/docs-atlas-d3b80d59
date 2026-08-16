@@ -91,12 +91,12 @@ Saltbox's default and recommended DNS provider is Cloudflare. Using Cloudflare a
 
 1. Create a free account at [cloudflare.com](https://www.cloudflare.com).
 2. Add your domain to Cloudflare and update your registrar's nameservers to the ones Cloudflare assigns.
-3. Create a Cloudflare API token with `Zone → DNS → Edit` permission scoped to your domain.
-4. Add the token and your Cloudflare account email to `accounts.yml`:
+3. Retrieve your **Cloudflare Global API Key** from My Profile → API Tokens → Global API Key.
+4. Add the key and your Cloudflare account email to `accounts.yml`:
 
 ```yaml
 cloudflare:
-  api: YOUR_CLOUDFLARE_API_TOKEN
+  api: YOUR_CLOUDFLARE_GLOBAL_API_KEY
   email: you@yourdomain.com
 ```
 
@@ -173,8 +173,8 @@ Before proceeding to the [Quickstart](/quickstart), confirm every item:
   <Card title="Registered Domain" icon="circle-check">
     A domain you control with its nameservers pointing to Cloudflare (or another supported provider).
   </Card>
-  <Card title="Cloudflare API Token" icon="circle-check">
-    Zone → DNS → Edit permission. Required for DNS-challenge TLS and automatic subdomain creation.
+  <Card title="Cloudflare Global API Key" icon="circle-check">
+    Retrieved from My Profile → API Tokens → Global API Key. Required for DNS-challenge TLS and automatic subdomain creation.
   </Card>
   <Card title="Ports 80 and 443 Open" icon="circle-check">
     Inbound TCP allowed from the internet at the firewall / security group level.

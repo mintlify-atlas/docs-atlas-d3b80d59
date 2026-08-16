@@ -14,7 +14,7 @@ Run the Docker role at any time to install Docker from scratch or upgrade an exi
 ansible-playbook saltbox.yml --tags docker
 ```
 
-The role inspects `/usr/bin/docker` to determine whether Docker is already present, reads the filesystem type of `/var/lib/` to apply the correct storage driver, and then writes `/etc/docker/daemon.json` before starting the `docker` and `docker.socket` systemd units. The daemon is configured with `json-file` log driver (max size 10 MB, max 3 files) and `userland-proxy: false` by default.
+The role inspects `/usr/bin/docker` to determine whether Docker is already present, reads the filesystem type of `/var/lib/` to apply the correct storage driver, and then writes `/etc/docker/daemon.json` before starting the `docker` and `docker.socket` systemd units. The daemon is always configured with the `json-file` log driver (max size 10 MB, max 3 files) and `userland-proxy: false`.
 
 ### Filesystem Considerations
 
@@ -23,11 +23,15 @@ The role inspects `/usr/bin/docker` to determine whether Docker is already prese
     The default and recommended filesystem. Saltbox selects the `overlay2` storage driver automatically, which works best on ext4.
   </Card>
   <Card title="BTRFS" icon="triangle-exclamation">
-    If `/var/lib/` resides on a BTRFS volume, Saltbox detects this and runs additional BTRFS cleanup and pseudo-filesystem setup tasks before starting Docker. Performance is generally worse than ext4.
+    If `/var/lib/` resides on a BTRFS volume, Saltbox detects this via `stat -f -c %T /var/lib/` and runs additional BTRFS cleanup and pseudo-filesystem setup tasks before starting Docker. Performance is generally worse than ext4.
   </Card>
 </CardGroup>
 
-To run only the filesystem-related portion of the Docker role (useful after resizing a volume), use the `docker-filesystem-resize` tag. That tag runs housekeeping tasks that also carry the `docker-housekeeping` tag independently.
+To run only the filesystem-related portion of the Docker role (useful after resizing a volume), use the `docker-filesystem-resize` tag:
+
+```bash
+ansible-playbook saltbox.yml --tags docker-filesystem-resize
+```
 
 ## The saltbox_managed_docker_controller
 
@@ -103,6 +107,7 @@ Saltbox does not use `docker-compose` files. Instead, every service is defined a
 | Tag | Effect |
 |-----|--------|
 | `docker` | Full Docker install / upgrade |
-| `docker-housekeeping` | Prune unused images, containers, and volumes |
+| `docker-filesystem-resize` | Re-run filesystem detection and Docker daemon configuration |
+| `docker-housekeeping` | Prune unused images and volumes |
 | `dockerhub` | Re-authenticate to DockerHub |
 | `ctop` | Install the `ctop` container monitoring tool |

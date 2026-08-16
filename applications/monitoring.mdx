@@ -96,7 +96,7 @@ cAdvisor runs in privileged mode with read-only mounts to the host root filesyst
     Per-second granularity metrics for CPU, memory, disk, network, Docker containers, and hundreds of application integrations. Accessible at `netdata.<domain>`.
   </Card>
   <Card title="Glances" icon="eye">
-    Python-based system overview combining CPU, memory, disk, network, and Docker stats in a single web page. Accessible at `glances.<domain>`.
+    Python-based system overview combining CPU, memory, disk, network, and Docker stats in a single interactive interface. Installed as a host binary (not a Docker container) — run it from any SSH session.
   </Card>
 </CardGroup>
 
@@ -133,7 +133,11 @@ netdata_role_claim_room: "YOUR_ROOM_ID"
 ansible-playbook saltbox.yml --tags glances
 ```
 
-Glances is accessible at `https://glances.<your-domain>`.
+Glances is installed as a host binary (not a Docker container) into a Python virtualenv at `/srv/glances`. It is not exposed through Traefik and has no subdomain. Run it directly in any SSH session:
+
+```bash
+glances
+```
 
 ---
 
@@ -251,7 +255,7 @@ Traefik can expose a Prometheus-compatible metrics endpoint. Enable it by settin
 | Node Exporter | `node-exporter` | 9100 | — (scrape target) |
 | cAdvisor | `cadvisor` | 8080 | `cadvisor.<domain>` |
 | Netdata | `netdata` | 19999 | `netdata.<domain>` |
-| Glances | `glances` | 61208 | `glances.<domain>` |
+| Glances | `glances` | — | Host CLI |
 | Dozzle | `dozzle` | 8080 | `dozzle.<domain>` |
 | Portainer | `portainer` | 9000 | `portainer.<domain>` |
 | Tautulli | `tautulli` | 8181 | `tautulli.<domain>` |
